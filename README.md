@@ -48,3 +48,9 @@ If you do not want to modify LeRobot's ACT policy source code, you should delete
 ## Future policies
 
 I would like to add support for Pi0 and other VLA models at some point! 
+
+## Other cool stuff
+
+[Pikodata](https://github.com/villekuosmanen/pikodata) is a Data Studio designed for LeRobot Datasets, offering a UI for deleting episodes and frames, as well as editing language descriptions for LeRobot Datasets.
+
+If you find my open-source Robotics and Physical AI work valuable, consider [sponsoring me on GitHub](https://github.com/sponsors/villekuosmanen)!
