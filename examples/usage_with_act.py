@@ -30,7 +30,7 @@ episode_start_timestamp = time.strftime("%Y%m%d-%H%M%S")
 # During inference, we add a bit of code to handle the attention maps without breaking other policy types
 observation = robot.capture_observation()
 res = policy.select_action(observation)
-if isinstance(policy, ACTPolicy):
+if isinstance(policy, ACTPolicyWithAttention):
     # Decompose res to action and attention maps
     (action, attention_maps) = res
 
