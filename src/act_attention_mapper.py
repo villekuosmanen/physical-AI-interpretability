@@ -101,12 +101,14 @@ class ACTPolicyWithAttention:
         # Process the attention weights
         if attention_weights_capture:
             attn = attention_weights_capture[0].to(action.device)
-            attention_maps = self._map_attention_to_images(attn, image_spatial_shapes)
+            attention_maps, proprio_attention = self._map_attention_to_images(attn, image_spatial_shapes)
             self.last_attention_maps = attention_maps
+            self.last_proprio_attention = proprio_attention  # Store for visualization
         else:
             print("Warning: No attention weights were captured.")
             attention_maps = [None] * self.num_images
             self.last_attention_maps = attention_maps
+            self.last_proprio_attention = 0.0  # Store for visualization
             
         return action, attention_maps
 
@@ -147,10 +149,11 @@ class ACTPolicyWithAttention:
     
     def _map_attention_to_images(self,
                                 attention: torch.Tensor,
-                                image_spatial_shapes: List[Tuple[int, int]]) -> List[np.ndarray]:
+                                image_spatial_shapes: List[Tuple[int, int]]) -> Tuple[List[np.ndarray], float]:
         """
-        Map transformer attention weights back to the original images.
-        Normalizes attention maps globally across all images for this timestep.
+        Map transformer attention weights back to the original images and extract proprioception attention.
+
+        Normalizes attention maps globally across all images AND proprioception for this timestep.
 
         Args:
             attention: Tensor of shape [batch, heads, tgt_len, src_len]
@@ -158,22 +161,42 @@ class ACTPolicyWithAttention:
             image_spatial_shapes: List of (height, width) tuples for feature maps
 
         Returns:
-            List of globally normalized attention maps as numpy arrays
+            Tuple of:
+
+            - List of globally normalized attention maps as numpy arrays
+
+            - Proprioception attention value (float, normalized to same scale as visual attention)
         """
         if attention.dim() == 4:
             attention = attention.mean(dim=1)  # -> [batch, tgt_len, src_len]
         elif attention.dim() != 3:
             raise ValueError(f"Unexpected attention dimension: {attention.shape}. Expected 3 or 4.")
 
-        batch_size = attention.shape[0]
-
-        n_prefix_tokens = 1
+        # Token structure: [latent, (robot_state), (env_state), (image_tokens)]
+        n_prefix_tokens = 1  # latent token
+        proprio_token_idx = None
         if self.config.robot_state_feature:
+            proprio_token_idx = n_prefix_tokens  # proprioception is the next token
             n_prefix_tokens += 1
         if self.config.env_state_feature:
             n_prefix_tokens += 1
 
-        # --- Step 1: Collect all raw (unnormalized) 2D numpy attention maps ---
+        # --- Step 1: Extract proprioception attention ---
+        proprio_attention = 0.0
+        if proprio_token_idx is not None:
+            # Extract attention to proprioception token
+            if self.specific_decoder_token_index is not None:
+                if 0 <= self.specific_decoder_token_index < attention.shape[1]:
+                    proprio_attention_tensor = attention[:, self.specific_decoder_token_index, proprio_token_idx]
+                else:
+                    proprio_attention_tensor = attention[:, :, proprio_token_idx].mean(dim=1)
+            else:
+                proprio_attention_tensor = attention[:, :, proprio_token_idx].mean(dim=1)
+
+            # Take first batch element
+            proprio_attention = proprio_attention_tensor[0].cpu().numpy().item()
+
+        # --- Step 2: Collect all raw (unnormalized) 2D numpy attention maps ---
         raw_numpy_attention_maps = []
         # Store the per-image token counts for reshaping, needed later
         tokens_per_image = [h * w for h, w in image_spatial_shapes]
@@ -228,10 +251,18 @@ class ACTPolicyWithAttention:
                 raw_numpy_attention_maps.append(None)
                 continue
 
-        # --- Step 2: Find global min and max from all valid raw maps ---
+        # --- Step 3: Find global min and max from all valid raw maps AND proprioception ---
         global_min = float('inf')
         global_max = float('-inf')
         found_any_valid_map = False
+
+        # Include proprioception attention in global scaling
+        if proprio_attention is not None:
+            if proprio_attention < global_min:
+                global_min = proprio_attention
+            if proprio_attention > global_max:
+                global_max = proprio_attention
+            found_any_valid_map = True
 
         for raw_map_np in raw_numpy_attention_maps:
             if raw_map_np is not None:
@@ -245,17 +276,22 @@ class ACTPolicyWithAttention:
 
         if not found_any_valid_map:
             # All maps were None, return the list of Nones
-            return raw_numpy_attention_maps
+            return raw_numpy_attention_maps, 0.0
         
         # If global_min and global_max are still inf/-inf, it means all maps were empty or had issues
         # This case should be covered by found_any_valid_map, but as a safe guard:
         if global_min == float('inf') or global_max == float('-inf'):
-             print("Warning (map_attention): Could not determine global min/max for attention. All maps might be invalid.")
-             # Fallback: return unnormalized maps or list of Nones
-             return [np.zeros_like(m, dtype=np.float32) if m is not None else None for m in raw_numpy_attention_maps]
+            print("Warning (map_attention): Could not determine global min/max for attention. All maps might be invalid.")
+            # Fallback: return unnormalized maps or list of Nones
+            return [np.zeros_like(m, dtype=np.float32) if m is not None else None for m in raw_numpy_attention_maps], 0.0
 
+        # --- Step 4: Normalize proprioception attention ---
+        if global_max > global_min:
+            normalized_proprio_attention = (proprio_attention - global_min) / (global_max - global_min)
+        else:
+            normalized_proprio_attention = 0.0
 
-        # --- Step 3: Normalize all valid maps using global min/max ---
+        # --- Step 5: Normalize all valid visual attention maps using global min/max ---
         final_normalized_attention_maps = []
         for raw_map_np in raw_numpy_attention_maps:
             if raw_map_np is None:
@@ -276,7 +312,7 @@ class ACTPolicyWithAttention:
                 # normalized_map = np.full_like(raw_map_np, 0.5, dtype=np.float32)
             final_normalized_attention_maps.append(normalized_map)
 
-        return final_normalized_attention_maps
+        return final_normalized_attention_maps, normalized_proprio_attention
     
     def visualize_attention(self, 
                         images: Optional[List[torch.Tensor]] = None, 
@@ -284,7 +320,8 @@ class ACTPolicyWithAttention:
                         observation: Optional[Dict[str, torch.Tensor]] = None,
                         use_rgb: bool = False,
                         overlay_alpha: float = 0.5,
-                        ) -> List[np.ndarray]:
+                        show_proprio_border: bool = True,
+                        proprio_border_width: int = 15) -> List[np.ndarray]:
         """
         Create visualizations by overlaying attention maps on images.
         
@@ -313,7 +350,9 @@ class ACTPolicyWithAttention:
                 attention_maps = self.last_attention_maps
             else:
                 raise ValueError("No attention maps provided and no stored attention maps available")
-                
+
+        # Get proprioception attention value
+        proprio_attention = getattr(self, 'last_proprio_attention', 0.0)                
         visualizations = []
         
         for i, (img, attn_map) in enumerate(zip(images, attention_maps)):
@@ -348,7 +387,38 @@ class ACTPolicyWithAttention:
             vis = cv2.addWeighted(
                 np.uint8(255 * img_np), 1 - overlay_alpha,
                 heatmap, overlay_alpha, 0
-            )            
+            )
+
+            # Add proprioception attention border
+            if show_proprio_border and proprio_attention > 0:
+                # Convert normalized proprioception attention to color intensity
+                border_intensity = int(255 * proprio_attention)
+                # Create border color (use a different colormap for proprioception)
+                # Using magenta/purple to distinguish from visual attention
+                if use_rgb:
+                    border_color = (border_intensity, 0, border_intensity)  # Magenta in RGB
+                else:
+                    border_color = (border_intensity, 0, border_intensity)  # Magenta in BGR
+                
+                # Draw border rectangles (outer and inner rectangles to create border effect)
+                # Outer rectangle (full border)
+                cv2.rectangle(vis, (0, 0), (w-1, h-1), border_color, proprio_border_width)
+
+                # Optional: Add text label showing proprioception attention value
+                text = f"Proprio: {proprio_attention:.3f}"
+                font = cv2.FONT_HERSHEY_SIMPLEX
+                font_scale = 0.6
+                thickness = 2
+                
+                # Get text size for background rectangle
+                (text_width, text_height), baseline = cv2.getTextSize(text, font, font_scale, thickness)
+
+                # Draw background rectangle for text
+                cv2.rectangle(vis, (5, 5), (5 + text_width + 10, 5 + text_height + 10), (0, 0, 0), -1)
+                
+                # Draw text
+                cv2.putText(vis, text, (10, 5 + text_height), font, font_scale, (255, 255, 255), thickness)
+            
             visualizations.append(vis)
             
         return visualizations

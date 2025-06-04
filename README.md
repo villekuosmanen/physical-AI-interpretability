@@ -5,11 +5,24 @@ Attention mappers and visualisation for transformer-based Physical AI policies.
 
 This project is more of an experiment rather than complete a library with a stable API so do keep that in mind.
 
-## Getting started
+## Analyse existing dataset
+
+Easiest way to use the attention mapper is to run a post-hoc attention analysis of an existing dataset. In this case, we run our pre-trained policy on episodes in the dataset and capture the attention maps. This requires no connection to any robots and should work out of the box.
+
+```
+python examples/visualise_original_data_attention.py --dataset-repo-id imstevenpmwork/doctest42 --episode-id 29 --policy-path <path to your pre-trained policy> --output-dir ./analysis_results
+```
+
+Pre-trained policy part may look something like this: `../lerobot/outputs/train/act_johns_arm/checkpoints/last/pretrained_model`
+
+If you get an error with `ModuleNotFoundError: No module named 'src'`, set the `PYTHONPATH` environment variable to the location of `physical-AI-attention-mapper` in your local directory, e.g.  
+`PYTHONPATH=/home/ville/physical-AI-attention-mapper:$PYTHONPATH`.
+
+## Use at test-time
 
 Use the `ACTPolicyWithAttention` plugin in your project either by importing it from here or just copying the `src/act_attention_mapper.py` file over.
 
-## ACT
+### ACT
 
 See `examples/usage_with_act.py` for use of the attention mapper with the default LeRobot ACT policy.
 
@@ -45,11 +58,11 @@ class ACTPolicy(PreTrainedPolicy):
 
 If you do not want to modify LeRobot's ACT policy source code, you should delete the `force_model_run` param inside `src/act_attention_mapper.py`'s `policy.select_action()` call.
 
-## Future policies
+### Future policies
 
 I would like to add support for Pi0 and other VLA models at some point! 
 
-## Other cool stuff
+### Other cool stuff
 
 [Pikodata](https://github.com/villekuosmanen/pikodata) is a Data Studio designed for LeRobot Datasets, offering a UI for deleting episodes and frames, as well as editing language descriptions for LeRobot Datasets.
 
