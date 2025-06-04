@@ -10,7 +10,7 @@ This project is more of an experiment rather than complete a library with a stab
 Easiest way to use the attention mapper is to run a post-hoc attention analysis of an existing dataset. In this case, we run our pre-trained policy on episodes in the dataset and capture the attention maps. This requires no connection to any robots and should work out of the box.
 
 ```
-python examples/visualise_original_data_attention.py --dataset-repo-id imstevenpmwork/doctest42 --episode-id 29 --policy-path <path to your pre-trained policy> --output-dir ./analysis_results
+python examples/visualise_original_data_attention.py --dataset-repo-id lerobot/svla_so101_pickplace --episode-id 29 --policy-path <path to your pre-trained policy> --output-dir ./analysis_results
 ```
 
 Pre-trained policy part may look something like this: `../lerobot/outputs/train/act_johns_arm/checkpoints/last/pretrained_model`
