@@ -20,7 +20,7 @@ from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.common.policies.factory import make_policy
 from lerobot.configs.policies import PreTrainedConfig
 
-from src.act_attention_mapper import ACTPolicyWithAttention
+from src.attention_maps import ACTPolicyWithAttention
 
 
 def none_or_int(value):

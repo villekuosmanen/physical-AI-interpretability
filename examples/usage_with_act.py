@@ -6,7 +6,7 @@ from lerobot.common.policies.factory import make_policy
 from lerobot.common.policies.act.modeling_act import ACTPolicy
 
 from examples.encode_video import encode_video_ffmpeg
-from src.act_attention_mapper import ACTPolicyWithAttention
+from src.attention_maps import ACTPolicyWithAttention
 
 # ...
 # Assuming use in existing LeRobot code where we already have a policy config and dataset

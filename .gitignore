@@ -173,3 +173,9 @@ cython_debug/
 # PyPI configuration file
 .pypirc
 .vscode
+
+# specific to this library
+.gradio
+wandb
+output
+**/feature_analysis_results

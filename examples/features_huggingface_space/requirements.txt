@@ -1,0 +1,4 @@
+gradio
+pillow
+numpy
+git+https://github.com/villekuosmanen/lerobot.git@main
