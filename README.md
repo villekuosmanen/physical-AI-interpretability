@@ -54,7 +54,7 @@ class ACTPolicy(PreTrainedPolicy):
         elif force_model_run:
             # predict and throw away the results
             # this simply allows our attention mapper to capture the attention values during the inference run
-            _ self.model(batch)
+            _ = self.model(batch)
         # return actions as before
         return self._action_queue.popleft()
 ```
