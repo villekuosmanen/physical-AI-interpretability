@@ -1,17 +1,21 @@
+from typing import Optional
+
+import cv2
 import numpy as np
 import torch
-import cv2
-from typing import List, Dict, Tuple, Optional
+
+# Constants for tensor dimensions
+TENSOR_DIM_3D = 3
+TENSOR_DIM_4D = 4
+
 
 class ACTPolicyWithAttention:
+    """Wrapper for ACTPolicy that provides transformer attention visualizations.
     """
-    Wrapper for ACTPolicy that provides transformer attention visualizations.
-    """
-    
+
     def __init__(self, policy, image_shapes=None, specific_decoder_token_index: Optional[int] = None):
-        """
-        Initialize the wrapper with an ACTPolicy.
-        
+        """Initialize the wrapper with an ACTPolicy.
+
         Args:
             policy: An instance of ACTPolicy
             image_shapes: Optional list of image shapes [(H1, W1), (H2, W2), ...] if known in advance
@@ -19,7 +23,7 @@ class ACTPolicyWithAttention:
         """
         self.policy = policy
         self.config = policy.config
-        
+
         self.specific_decoder_token_index = specific_decoder_token_index
         if self.specific_decoder_token_index is not None:
             if not hasattr(self.config, 'chunk_size'):
@@ -35,10 +39,10 @@ class ACTPolicyWithAttention:
             self.num_images = len(self.config.image_features)
         else:
             self.num_images = 0
-            
+
         # Store image shapes if provided, otherwise will be detected at runtime
         self.image_shapes = image_shapes
-        
+
         # For storing the last processed images and attention
         self.last_observation = None
         self.last_attention_maps = None
@@ -49,29 +53,28 @@ class ACTPolicyWithAttention:
         not self.policy.model.decoder.layers:
             raise AttributeError("Policy model structure does not match expected ACT architecture for target_layer.")
         self.target_layer = self.policy.model.decoder.layers[-1].multihead_attn
-        
-    def select_action(self, observation: Dict[str, torch.Tensor]) -> Tuple[torch.Tensor, torch.Tensor, List[np.ndarray]]:
-        """
-        Extends policy.select_action to also compute attention maps.
-        
+
+    def select_action(self, observation: dict[str, torch.Tensor]) -> tuple[torch.Tensor, torch.Tensor, list[np.ndarray]]:
+        """Extends policy.select_action to also compute attention maps.
+
         Args:
             observation: Dictionary of observations
-            
+
         Returns:
             action: The predicted action tensor
             attention_maps: List of attention maps, one for each image
         """
         # Store the observation for later use
         self.last_observation = observation.copy()
-        
+
         # Process the images through the backbone first to understand spatial dimensions
         images = self._extract_images(observation)
         image_spatial_shapes = self._get_image_spatial_shapes(images)
-        
+
         # Set up hook to capture attention weights
         attention_weights_capture = []
-        
-        def attention_hook(module, input_args, output_tuple):
+
+        def attention_hook(module, _input_args, output_tuple):
             # Capture the attention weights
             # In some MultiheadAttention implementations, the attention weights
             # might be returned with shape: [batch_size, tgt_len, src_len]
@@ -83,21 +86,21 @@ class ACTPolicyWithAttention:
                 # If output format is different, try to get weights from the module directly
                 # Some implementations store attention weights in the module after forward pass
                 attn_weights = getattr(module, 'attn_weights', None)
-            
+
             if attn_weights is not None:
                 # Store the weights regardless of shape - we'll handle reshape later
                 attention_weights_capture.append(attn_weights.detach().cpu())
-        
+
         # Register the hook
         handle = self.target_layer.register_forward_hook(attention_hook)
-        
+
         # Call the original policy's select_action
         with torch.inference_mode():
             action = self.policy.select_action(observation, force_model_run=True)
-        
+
         # Remove the hook
         handle.remove()
-                
+
         # Process the attention weights
         if attention_weights_capture:
             attn = attention_weights_capture[0].to(action.device)
@@ -109,31 +112,30 @@ class ACTPolicyWithAttention:
             attention_maps = [None] * self.num_images
             self.last_attention_maps = attention_maps
             self.last_proprio_attention = 0.0  # Store for visualization
-            
+
         return action, attention_maps
 
-    def _extract_images(self, observation: Dict[str, torch.Tensor]) -> List[torch.Tensor]:
-        """Extract image tensors from observation dictionary"""
+    def _extract_images(self, observation: dict[str, torch.Tensor]) -> list[torch.Tensor]:
+        """Extract image tensors from observation dictionary."""
         images = []
         for key in self.config.image_features:
             if key in observation:
                 images.append(observation[key])
         return images
-    
-    def _get_image_spatial_shapes(self, images: List[torch.Tensor]) -> List[Tuple[int, int]]:
-        """
-        Get the spatial shapes of the feature maps after ResNet processing.
-        For ResNet, this is typically H/32 × W/32
+
+    def _get_image_spatial_shapes(self, images: list[torch.Tensor]) -> list[tuple[int, int]]:
+        """Get the spatial shapes of the feature maps after ResNet processing.
+        For ResNet, this is typically H/32 × W/32.
         """
         spatial_shapes = []
         for img_tensor in images:
             if img_tensor is None:
                 spatial_shapes.append((0, 0))
                 continue
-                
+
             # Run image through backbone to get feature map shape
             with torch.no_grad():
-                if img_tensor.dim() == 3:
+                if img_tensor.dim() == TENSOR_DIM_3D:
                     img_tensor_batched = img_tensor.unsqueeze(0)
                 else:
                     img_tensor_batched = img_tensor
@@ -146,12 +148,11 @@ class ACTPolicyWithAttention:
                 spatial_shapes.append((h, w))
 
         return spatial_shapes
-    
+
     def _map_attention_to_images(self,
                                 attention: torch.Tensor,
-                                image_spatial_shapes: List[Tuple[int, int]]) -> Tuple[List[np.ndarray], float]:
-        """
-        Map transformer attention weights back to the original images and extract proprioception attention.
+                                image_spatial_shapes: list[tuple[int, int]]) -> tuple[list[np.ndarray], float]:
+        """Map transformer attention weights back to the original images and extract proprioception attention.
 
         Normalizes attention maps globally across all images AND proprioception for this timestep.
 
@@ -167,9 +168,9 @@ class ACTPolicyWithAttention:
 
             - Proprioception attention value (float, normalized to same scale as visual attention)
         """
-        if attention.dim() == 4:
+        if attention.dim() == TENSOR_DIM_4D:
             attention = attention.mean(dim=1)  # -> [batch, tgt_len, src_len]
-        elif attention.dim() != 3:
+        elif attention.dim() != TENSOR_DIM_3D:
             raise ValueError(f"Unexpected attention dimension: {attention.shape}. Expected 3 or 4.")
 
         # Token structure: [latent, (robot_state), (env_state), (image_tokens)]
@@ -258,26 +259,22 @@ class ACTPolicyWithAttention:
 
         # Include proprioception attention in global scaling
         if proprio_attention is not None:
-            if proprio_attention < global_min:
-                global_min = proprio_attention
-            if proprio_attention > global_max:
-                global_max = proprio_attention
+            global_min = min(global_min, proprio_attention)
+            global_max = max(global_max, proprio_attention)
             found_any_valid_map = True
 
         for raw_map_np in raw_numpy_attention_maps:
             if raw_map_np is not None:
                 current_min = raw_map_np.min()
                 current_max = raw_map_np.max()
-                if current_min < global_min:
-                    global_min = current_min
-                if current_max > global_max:
-                    global_max = current_max
+                global_min = min(global_min, current_min)
+                global_max = max(global_max, current_max)
                 found_any_valid_map = True
 
         if not found_any_valid_map:
             # All maps were None, return the list of Nones
             return raw_numpy_attention_maps, 0.0
-        
+
         # If global_min and global_max are still inf/-inf, it means all maps were empty or had issues
         # This case should be covered by found_any_valid_map, but as a safe guard:
         if global_min == float('inf') or global_max == float('-inf'):
@@ -313,25 +310,26 @@ class ACTPolicyWithAttention:
             final_normalized_attention_maps.append(normalized_map)
 
         return final_normalized_attention_maps, normalized_proprio_attention
-    
-    def visualize_attention(self, 
-                        images: Optional[List[torch.Tensor]] = None, 
-                        attention_maps: Optional[List[np.ndarray]] = None, 
-                        observation: Optional[Dict[str, torch.Tensor]] = None,
+
+    def visualize_attention(self,
+                        images: Optional[list[torch.Tensor]] = None,
+                        attention_maps: Optional[list[np.ndarray]] = None,
+                        observation: Optional[dict[str, torch.Tensor]] = None,
                         use_rgb: bool = False,
                         overlay_alpha: float = 0.5,
                         show_proprio_border: bool = True,
-                        proprio_border_width: int = 15) -> List[np.ndarray]:
-        """
-        Create visualizations by overlaying attention maps on images.
-        
+                        proprio_border_width: int = 15) -> list[np.ndarray]:
+        """Create visualizations by overlaying attention maps on images.
+
         Args:
             images: List of image tensors (optional)
             attention_maps: List of attention maps (optional)
             observation: Observation dict (optional, used if images not provided)
             use_rgb: Whether to use RGB for visualization
             overlay_alpha: Alpha value for attention overlay
-            
+            show_proprio_border: Whether to show proprioception attention as border
+            proprio_border_width: Width of the proprioception attention border
+
         Returns:
             List of visualization images as numpy arrays
         """
@@ -343,7 +341,7 @@ class ACTPolicyWithAttention:
                 images = self._extract_images(self.last_observation)
             else:
                 raise ValueError("No images provided and no stored observation available")
-        
+
         # If no attention maps provided, use last computed ones
         if attention_maps is None:
             if self.last_attention_maps is not None:
@@ -352,37 +350,39 @@ class ACTPolicyWithAttention:
                 raise ValueError("No attention maps provided and no stored attention maps available")
 
         # Get proprioception attention value
-        proprio_attention = getattr(self, 'last_proprio_attention', 0.0)                
+        proprio_attention = getattr(self, 'last_proprio_attention', 0.0)
         visualizations = []
-        
-        for i, (img, attn_map) in enumerate(zip(images, attention_maps)):
+
+        for _i, (img, attn_map) in enumerate(zip(images, attention_maps)):
             if img is None or attn_map is None:
                 visualizations.append(None)
                 continue
-                
+
             # Convert tensor to numpy
             if isinstance(img, torch.Tensor):
                 # Move channels to last dimension (H,W,C) for visualization
-                if img.dim() == 4:  # (B,C,H,W)
-                    img = img.squeeze(0)
-                img_np = img.permute(1, 2, 0).cpu().numpy()
+                if img.dim() == TENSOR_DIM_4D:  # (B,C,H,W)
+                    img_tensor = img.squeeze(0)
+                else:
+                    img_tensor = img
+                img_np = img_tensor.permute(1, 2, 0).cpu().numpy()
                 # Normalize if needed
                 if img_np.max() > 1.0:
                     img_np = img_np / 255.0
             else:
                 img_np = img
-                
+
             # Get image dimensions
             h, w = img_np.shape[:2]
-            
+
             # Resize attention map to match image size
             attn_map_resized = cv2.resize(attn_map, (w, h))
-            
+
             # Create heatmap
             heatmap = cv2.applyColorMap(np.uint8(255 * attn_map_resized), cv2.COLORMAP_JET)
             if use_rgb:
                 heatmap = cv2.cvtColor(heatmap, cv2.COLOR_BGR2RGB)
-            
+
             # Create overlay with attention
             vis = cv2.addWeighted(
                 np.uint8(255 * img_np), 1 - overlay_alpha,
@@ -399,7 +399,7 @@ class ACTPolicyWithAttention:
                     border_color = (border_intensity, 0, border_intensity)  # Magenta in RGB
                 else:
                     border_color = (border_intensity, 0, border_intensity)  # Magenta in BGR
-                
+
                 # Draw border rectangles (outer and inner rectangles to create border effect)
                 # Outer rectangle (full border)
                 cv2.rectangle(vis, (0, 0), (w-1, h-1), border_color, proprio_border_width)
@@ -409,20 +409,20 @@ class ACTPolicyWithAttention:
                 font = cv2.FONT_HERSHEY_SIMPLEX
                 font_scale = 0.6
                 thickness = 2
-                
+
                 # Get text size for background rectangle
                 (text_width, text_height), baseline = cv2.getTextSize(text, font, font_scale, thickness)
 
                 # Draw background rectangle for text
                 cv2.rectangle(vis, (5, 5), (5 + text_width + 10, 5 + text_height + 10), (0, 0, 0), -1)
-                
+
                 # Draw text
                 cv2.putText(vis, text, (10, 5 + text_height), font, font_scale, (255, 255, 255), thickness)
-            
+
             visualizations.append(vis)
-            
+
         return visualizations
-    
+
     # Forward other methods to the original policy
     def __getattr__(self, name):
         if name not in self.__dict__:
