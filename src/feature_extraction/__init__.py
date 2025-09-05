@@ -7,4 +7,7 @@ from src.feature_extraction.activation_collector import (
     ActivationCollector,
     create_cached_dataloader,
     collect_and_cache_activations,
+    is_cache_valid,
+    cleanup_invalid_cache,
+    get_cache_status,
 )
