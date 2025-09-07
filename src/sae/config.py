@@ -85,7 +85,7 @@ class SAETrainingConfig:
         
         # Infer num_tokens based on token sampling
         if token_sampler_config is not None:
-            from src.feature_extraction.token_sampler import TokenSampler
+            from src.sae import TokenSampler
             
             # Create a dummy sampler to get the number of output tokens
             # We need to know the original number of tokens in the model

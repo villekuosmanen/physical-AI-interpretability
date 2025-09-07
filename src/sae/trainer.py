@@ -18,16 +18,16 @@ from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
 from src.utils import make_dataset_without_config, get_repo_hash
 from src.utils.naming import get_experiment_name, get_cache_name
-from src.sae.config import SAETrainingConfig
-from src.feature_extraction import (
+from .config import SAETrainingConfig
+from .token_sampler import TokenSamplerConfig
+from .activation_collector import (
     collect_and_cache_activations,
     create_cached_dataloader,
-    create_multimodal_sae,
     is_cache_valid,
     cleanup_invalid_cache,
     get_cache_status,
 )
-from src.feature_extraction.token_sampler import TokenSamplerConfig
+from .sae import create_multimodal_sae
 
 
 class SAETrainer():
@@ -533,7 +533,7 @@ def load_sae_model(model_path: str, config_path: str = None, device: str = 'cuda
     Returns:
         Loaded SAE model
     """
-    from src.feature_extraction import create_multimodal_sae
+    from src.sae import create_multimodal_sae
     
     model_path = Path(model_path)
     

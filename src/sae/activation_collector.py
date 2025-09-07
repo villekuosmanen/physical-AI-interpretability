@@ -9,7 +9,7 @@ from safetensors.torch import save_file, load_file
 import torch
 from tqdm import tqdm
 
-from src.feature_extraction import TokenSamplerConfig, TokenSampler
+from .token_sampler import TokenSamplerConfig, TokenSampler
 
 
 @dataclass

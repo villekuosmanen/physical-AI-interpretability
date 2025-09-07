@@ -10,19 +10,7 @@ A package for interpretability analysis of physical AI models, including:
 __version__ = "0.1.0"
 
 # Main exports
-from .sae import SAETrainer, SAETrainingConfig, load_sae_model
-from .feature_extraction import (
-    MultiModalSAE,
-    create_multimodal_sae,
-    TokenSampler,
-    TokenSamplerConfig,
-    ActivationCollector,
-    collect_and_cache_activations,
-    create_cached_dataloader,
-    is_cache_valid,
-    cleanup_invalid_cache,
-    get_cache_status,
-)
+from .sae import SAETrainer, SAETrainingConfig, load_sae_model, TokenSampler, TokenSamplerConfig, MultiModalSAE, create_multimodal_sae, prepare_batch_for_bfloat16
 from .attention_maps import ACTPolicyWithAttention
 from .utils import make_dataset_without_config, get_repo_hash
 
