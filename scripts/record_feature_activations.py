@@ -19,7 +19,7 @@ from lerobot.common.policies.factory import make_policy
 from lerobot.common.datasets.utils import dataloader_collate_fn
 from lerobot.configs.policies import PreTrainedConfig
 
-from src.feature_extraction import MultiModalSAE, TokenSamplerConfig, TokenSampler
+from src.sae import MultiModalSAE, TokenSamplerConfig, TokenSampler
 
 
 @dataclass

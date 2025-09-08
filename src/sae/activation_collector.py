@@ -9,12 +9,16 @@ from safetensors.torch import save_file, load_file
 import torch
 from tqdm import tqdm
 
-from src.feature_extraction import TokenSamplerConfig, TokenSampler
+from .token_sampler import TokenSamplerConfig, TokenSampler
 
 
 @dataclass
 class ActivationCacheConfig:
-    """Configuration for activation caching"""
+    """
+    Configuration for activation caching.
+    
+    :meta private:
+    """
     # Cache settings
     cache_dir: str = "./output/activation_cache"
     buffer_size: int = 128  # Number of samples per cache file
@@ -26,7 +30,7 @@ class ActivationCacheConfig:
     
     # Memory management
     max_memory_gb: float = 4.0  # Maximum memory to use for caching
-    cleanup_on_start: bool = True  # Clean old cache files
+    cleanup_on_start: bool = False  # Clean old cache files (set True to force fresh start)
     
     # Validation
     validate_cache: bool = True  # Validate cached files on load
@@ -34,7 +38,9 @@ class ActivationCacheConfig:
 
 class ActivationCache:
     """
-    Manages caching of activations to disk for memory-efficient SAE training
+    Manages caching of activations to disk for memory-efficient SAE training.
+
+    :meta private:
     """
     
     def __init__(
@@ -61,14 +67,151 @@ class ActivationCache:
             'buffer_size': config.buffer_size,
             'cache_files': [],
             'total_samples': 0,
-            'activation_shape': None
+            'activation_shape': None,
+            # Progress tracking for resumability
+            'collection_status': 'in_progress',  # 'in_progress', 'completed', 'failed'
+            'last_batch_idx': -1,  # Last successfully processed batch
+            'last_updated': time.time(),
+            'resume_info': {
+                'dataloader_position': 0,
+                'can_resume': True,
+                'interruption_count': 0
+            }
         }
         
-        # Cleanup old cache if requested
-        if config.cleanup_on_start:
+        # Try to load existing cache state for resumption first
+        cache_loaded = self._try_load_existing_cache()
+        
+        # Only cleanup if we couldn't load a valid resumable cache
+        if config.cleanup_on_start and not cache_loaded:
+            logging.info("No resumable cache found, cleaning up any invalid cache files")
             self._cleanup_cache()
         
         logging.info(f"Initialized activation cache at {self.cache_dir}")
+    
+    def update_batch_idx(self, batch_idx):
+        self.metadata['last_batch_idx'] = batch_idx
+
+    def _try_load_existing_cache(self):
+        """Try to load existing cache metadata for resumption"""
+        metadata_path = self.cache_dir / "cache_metadata.json"
+        
+        if metadata_path.exists():
+            try:
+                # Load existing metadata
+                with open(metadata_path, 'r') as f:
+                    existing_metadata = json.load(f)
+                                
+                # Check if cache is resumable
+                if (
+                    existing_metadata.get('collection_status') == 'in_progress' and 
+                    self._validate_existing_cache_files(existing_metadata)
+                ):
+                    
+                    # Restore state for resumption
+                    self.metadata.update(existing_metadata)
+                    self.total_samples = existing_metadata.get('total_samples', 0)
+                    
+                    # If metadata doesn't have cache_files info, reconstruct it from directory
+                    cache_files_info = existing_metadata.get('cache_files', [])
+                    if not cache_files_info:
+                        # Scan directory for existing cache files
+                        cache_files_info = self._reconstruct_cache_files_info()
+                        self.metadata['cache_files'] = cache_files_info
+                    
+                    self.buffer_count = len(cache_files_info)
+                    self.cache_files = [
+                        self.cache_dir / info['filename'] 
+                        for info in cache_files_info
+                    ]
+                    
+                    # Increment interruption count
+                    self.metadata['resume_info']['interruption_count'] += 1
+                    
+                    logging.info(f"Found resumable cache with {self.total_samples} samples")
+                    logging.info(f"Last batch: {self.metadata['last_batch_idx']}, "
+                               f"Interruptions: {self.metadata['resume_info']['interruption_count']}")
+                    return True
+                else:
+                    logging.info("Existing cache found but not resumable - starting fresh")
+                    
+            except (json.JSONDecodeError, KeyError, FileNotFoundError) as e:
+                logging.warning(f"Could not load existing cache state: {e}")
+        
+        return False
+    
+    def _validate_existing_cache_files(self, metadata: dict) -> bool:
+        """Validate that all referenced cache files actually exist and are valid"""
+        try:
+            cache_files_info = metadata.get('cache_files', [])
+            
+            # If no cache_files info in metadata, check if any safetensors files exist
+            if not cache_files_info:
+                safetensors_files = list(self.cache_dir.glob("activations_buffer_*.safetensors"))
+                if not safetensors_files:
+                    logging.warning("No cache files found in directory")
+                    return False
+                logging.info(f"Found {len(safetensors_files)} cache files without metadata")
+                return True  # We can reconstruct the metadata
+            
+            # Validate referenced files
+            for file_info in cache_files_info:
+                file_path = self.cache_dir / file_info['filename']
+                if not file_path.exists():
+                    logging.warning(f"Missing cache file: {file_path}")
+                    return False
+                    
+                # Basic size check - file should have reasonable size
+                if file_path.stat().st_size < 100:  # Very small files are likely corrupted
+                    logging.warning(f"Cache file too small (likely corrupted): {file_path}")
+                    return False
+            
+            return True
+        except Exception as e:
+            logging.warning(f"Cache validation failed: {e}")
+            return False
+    
+    def _reconstruct_cache_files_info(self) -> List[Dict[str, Any]]:
+        """Reconstruct cache files info by scanning the directory"""
+        cache_files_info = []
+        
+        # Find all safetensors files in the cache directory
+        safetensors_files = sorted(self.cache_dir.glob("activations_buffer_*.safetensors"))
+        
+        for filepath in safetensors_files:
+            # Extract buffer index from filename
+            filename = filepath.name
+            try:
+                buffer_idx = int(filename.split('_')[-1].split('.')[0])
+            except (ValueError, IndexError):
+                continue
+            
+            # Try to determine number of samples by loading metadata
+            metadata_path = filepath.with_suffix('.json')
+            num_samples = 0
+            sample_range = (0, 0)
+            
+            if metadata_path.exists():
+                try:
+                    with open(metadata_path, 'r') as f:
+                        buffer_metadata = json.load(f)
+                    num_samples = len(buffer_metadata)
+                    if buffer_metadata:
+                        # Calculate sample range
+                        sample_indices = [item.get('sample_idx', 0) for item in buffer_metadata]
+                        sample_range = (min(sample_indices), max(sample_indices))
+                except (json.JSONDecodeError, KeyError):
+                    pass
+            
+            cache_files_info.append({
+                'filename': filename,
+                'buffer_idx': buffer_idx,
+                'num_samples': num_samples,
+                'sample_range': sample_range
+            })
+        
+        logging.info(f"Reconstructed cache info for {len(cache_files_info)} buffers")
+        return cache_files_info
     
     def _cleanup_cache(self):
         """Remove old cache files"""
@@ -114,9 +257,9 @@ class ActivationCache:
             self.current_buffer.append(sample)
             self.total_samples += 1
             
-            # Flush buffer if full
-            if len(self.current_buffer) >= self.config.buffer_size:
-                self._flush_buffer()
+        # Flush buffer if full
+        if len(self.current_buffer) >= self.config.buffer_size:
+            self._flush_buffer()
     
     def _extract_sample_metadata(self, batch_metadata: Dict[str, Any], sample_idx: int) -> Dict[str, Any]:
         """Extract metadata for a single sample from batch metadata"""
@@ -157,6 +300,16 @@ class ActivationCache:
         })
         
         logging.info(f"Saved buffer {self.buffer_count} with {len(self.current_buffer)} samples to {filepath.name}")
+        
+        # Update and save incremental metadata after each buffer
+        self.metadata['total_samples'] = self.total_samples
+        self.metadata['num_buffers'] = self.buffer_count + 1  # +1 because we're about to increment
+        self.metadata['last_updated'] = time.time()
+        
+        # Save incremental metadata so the cache can be loaded even during collection
+        metadata_path = self.cache_dir / "cache_metadata.json" 
+        with open(metadata_path, 'w') as f:
+            json.dump(self.metadata, f, indent=2)
         
         # Clear buffer
         self.current_buffer = []
@@ -227,6 +380,16 @@ class ActivationCache:
         self.metadata['num_buffers'] = self.buffer_count
         self.metadata['finalized_at'] = time.time()
         
+        # Only mark as completed if collection was actually complete
+        if self.metadata.get('collection_complete', False):
+            self.metadata['collection_status'] = 'completed'
+            self.metadata['resume_info']['can_resume'] = False
+        else:
+            # Collection was interrupted - keep as in_progress and resumable
+            self.metadata['collection_status'] = 'in_progress'
+            self.metadata['resume_info']['can_resume'] = True
+            logging.info("Cache finalized but collection incomplete - remains resumable")
+        
         # Save metadata
         metadata_path = self.cache_dir / "cache_metadata.json"
         with open(metadata_path, 'w') as f:
@@ -244,7 +407,9 @@ class ActivationCache:
 
 class CachedActivationDataset(torch.utils.data.Dataset):
     """
-    Dataset that loads activations from cached files
+    Dataset that loads activations from cached files.
+
+    :meta private:
     """
     
     def __init__(self, cache_dir: str, shuffle: bool = True, preload_buffers: int = 2):
@@ -365,7 +530,9 @@ class CachedActivationDataset(torch.utils.data.Dataset):
 
 class ActivationCollector:
     """
-    Memory-efficient activation collector that caches to disk
+    Memory-efficient activation collector that caches to disk.
+
+    :meta private:
     """
     
     def __init__(
@@ -412,7 +579,7 @@ class ActivationCollector:
         device: str = 'cuda'
     ) -> str:
         """
-        Collect activations and cache to disk
+        Collect activations and cache to disk with resumption support
         
         Args:
             dataloader: DataLoader with input data
@@ -425,27 +592,69 @@ class ActivationCollector:
         self.act_model.eval()
         self.act_model = self.act_model.to(device)
         
-        samples_collected = 0
+        # Determine starting point for resumption
+        start_batch_idx = self.cache.metadata.get('last_batch_idx', -1) + 1
+        total_batches = len(dataloader)
         
-        with torch.no_grad():
-            for batch_idx, batch in enumerate(tqdm(dataloader, desc="Collecting activations")):
-                # Move batch to device
-                for key in batch:
-                    if isinstance(batch[key], torch.Tensor):
-                        batch[key] = batch[key].to(device)
+        # Set completion tracking metadata on first run or update if needed
+        if self.cache.metadata.get('total_batches_expected') is None:
+            self.cache.metadata['total_batches_expected'] = total_batches
+            self.cache.metadata['max_samples_target'] = max_samples
+            logging.info(f"Set completion target: {total_batches} batches, max_samples: {max_samples}")
+        
+        if start_batch_idx > 0:
+            logging.info(f"Resuming activation collection from batch {start_batch_idx}/{total_batches}")
+            logging.info(f"Already collected {self.cache.total_samples} samples")
+        
+        samples_collected = self.cache.total_samples
+        processed_batches = 0
+        
+        try:
+            with torch.inference_mode():
+                for batch_idx, batch in enumerate(tqdm(dataloader, desc="Collecting activations", 
+                                                     initial=start_batch_idx, total=total_batches)):
+                    # Skip batches we've already processed (for resumption)
+                    if batch_idx < start_batch_idx:
+                        continue
+                    
+                    # Move batch to device
+                    for key in batch:
+                        if isinstance(batch[key], torch.Tensor):
+                            batch[key] = batch[key].to(device)
+                    
+                    # Extract dataset indices if available for better tracking
+                    dataset_idx = None
+                    if 'dataset_index' in batch:
+                        dataset_idx = batch['dataset_index'][0].item() if torch.is_tensor(batch['dataset_index']) else batch['dataset_index'][0]
+                    
+                    # Forward pass (triggers hook and caching)
+                    self.cache.update_batch_idx(batch_idx)
+                    _ = self.act_model.select_action(batch)
+                    self.act_model.reset()
+                    samples_collected = self.cache.total_samples
+                    processed_batches += 1
+                    
+                    # Check memory usage periodically
+                    if batch_idx % 100 == 0:
+                        self._check_memory_usage()
+                    
+                    if max_samples and samples_collected >= max_samples:
+                        logging.info(f"Reached maximum samples limit: {max_samples}")
+                        self.cache.metadata['collection_complete'] = True
+                        break
                 
-                # Forward pass (triggers hook and caching)
-                _ = self.act_model(batch)
-                
-                samples_collected = self.cache.total_samples
-                
-                # Check memory usage periodically
-                if batch_idx % 100 == 0:
-                    self._check_memory_usage()
-                
-                if max_samples and samples_collected >= max_samples:
-                    logging.info(f"Reached maximum samples limit: {max_samples}")
-                    break
+                # Check if we completed all batches
+                if batch_idx >= total_batches - 1:
+                    logging.info(f"Completed all {total_batches} batches")
+                    self.cache.metadata['collection_complete'] = True
+                        
+        except Exception as e:
+            # Mark cache as failed but keep progress for potential resumption
+            self.cache.metadata['collection_status'] = 'failed'
+            self.cache.metadata['resume_info']['can_resume'] = True
+            
+            logging.error(f"Activation collection failed at batch {batch_idx if 'batch_idx' in locals() else start_batch_idx}: {e}")
+            raise
         
         # Finalize cache
         cache_info = self.cache.finalize()
@@ -470,6 +679,141 @@ class ActivationCollector:
             self.hook = None
 
 
+def is_cache_valid(cache_dir: str) -> bool:
+    """
+    Check if a cache directory contains valid cached activations.
+    Now supports checking resumable (incomplete) caches.
+    
+    Args:
+        cache_dir: Directory to check
+        
+    Returns:
+        True if cache is valid (complete or resumable), False otherwise
+
+    :meta private:
+    """
+    cache_path = Path(cache_dir)
+    
+    # Check if directory exists
+    if not cache_path.exists():
+        return False
+    
+    # Check if metadata file exists
+    metadata_path = cache_path / "cache_metadata.json"
+    
+    # For resumable caches, progress.json might exist without full metadata
+    if not metadata_path.exists():
+        return False
+    
+    try:
+        # Load metadata if available
+        metadata = {}
+        if metadata_path.exists():
+            with open(metadata_path, 'r') as f:
+                metadata = json.load(f)
+        
+        # Check collection status
+        collection_status = metadata.get('collection_status')
+        
+        if collection_status == 'completed':
+            # For completed caches, do full validation
+            required_fields = ['total_samples', 'num_buffers', 'cache_files', 'activation_shape']
+            if not all(field in metadata for field in required_fields):
+                return False
+            
+            # Check if cache files actually exist
+            cache_files_info = metadata.get('cache_files', [])
+            for file_info in cache_files_info:
+                file_path = cache_path / file_info['filename']
+                if not file_path.exists():
+                    return False
+            
+            # Check that we have a reasonable number of samples
+            if metadata.get('total_samples', 0) <= 0:
+                return False
+            
+        return True
+        
+    except (json.JSONDecodeError, KeyError, FileNotFoundError):
+        return False
+
+def get_cache_status(cache_dir: str) -> dict:
+    """
+    Get detailed status information about a cache directory.
+    
+    Args:
+        cache_dir: Directory to check
+        
+    Returns:
+        Dictionary with cache status information
+
+    :meta private:
+    """
+    cache_path = Path(cache_dir)
+    
+    if not cache_path.exists():
+        return {'status': 'missing', 'exists': False}
+    
+    status_info = {
+        'exists': True,
+        'path': str(cache_path),
+        'status': 'unknown',
+        'total_samples': 0,
+        'can_resume': False,
+        'last_batch_idx': -1,
+        'interruption_count': 0,
+        'cache_files': 0
+    }
+    
+    try:
+        # Load metadata if available
+        metadata_path = cache_path / "cache_metadata.json"
+        
+        metadata = {}
+        if metadata_path.exists():
+            with open(metadata_path, 'r') as f:
+                metadata = json.load(f)
+                
+        
+        # Extract status information
+        status_info['status'] = metadata.get('collection_status')
+        status_info['total_samples'] = metadata.get('total_samples', 0)
+        status_info['can_resume'] = metadata.get('resume_info', {}).get('can_resume', False)
+        status_info['last_batch_idx'] = metadata.get('last_batch_idx', -1)
+        status_info['interruption_count'] = metadata.get('resume_info', {}).get('interruption_count', 0)
+        status_info['cache_files'] = len(metadata.get('cache_files', []))
+        
+        if metadata.get('created_at'):
+            status_info['created_at'] = metadata['created_at']
+        if metadata.get('last_updated'):
+            status_info['last_updated'] = metadata.get('last_updated')
+        if metadata.get('finalized_at'):
+            status_info['finalized_at'] = metadata['finalized_at']
+            
+    except (json.JSONDecodeError, KeyError, FileNotFoundError) as e:
+        status_info['status'] = 'corrupted'
+        status_info['error'] = str(e)
+    
+    return status_info
+
+
+def cleanup_invalid_cache(cache_dir: str) -> None:
+    """
+    Remove an invalid cache directory and all its contents.
+    
+    Args:
+        cache_dir: Directory to clean up
+
+    :meta private:
+    """
+    cache_path = Path(cache_dir)
+    
+    if cache_path.exists():
+        import shutil
+        logging.info(f"Cleaning up invalid cache directory: {cache_path}")
+        shutil.rmtree(cache_path)
+
+
 def create_cached_dataloader(
     cache_dir: str,
     batch_size: int = 256,
@@ -489,6 +833,8 @@ def create_cached_dataloader(
         
     Returns:
         DataLoader for cached activations
+
+    :meta private:
     """
     dataset = CachedActivationDataset(
         cache_dir=cache_dir,
@@ -509,12 +855,14 @@ def create_cached_dataloader(
 def collect_and_cache_activations(
     act_model,
     dataloader: torch.utils.data.DataLoader,
-    layer_name: str = "model.encoder.layers.3.norm2",
-    cache_dir: str = "./output/activation_cache",
+    layer_name: str,
+    cache_dir: str,
     experiment_name: str = "act_activations",
     buffer_size: int = 128,
     max_samples: Optional[int] = None,
     device: str = 'cuda',
+    # Cache management
+    cleanup_on_start: bool = False,  # Set True to force clean start instead of resuming
     # Token sampling parameters
     use_token_sampling: bool = True,
     fixed_tokens: List[int] = None,
@@ -535,6 +883,7 @@ def collect_and_cache_activations(
         buffer_size: Number of samples per cache file
         max_samples: Maximum samples to collect
         device: Device to run model on
+        cleanup_on_start: If True, force clean start instead of resuming from cache
         use_token_sampling: Whether to use token sampling
         fixed_tokens: Token indices to always include (default: [0, 601])
         sampling_strategy: "uniform", "stride", "random_fixed", or "block_average"
@@ -544,6 +893,8 @@ def collect_and_cache_activations(
         
     Returns:
         Path to cache directory
+
+    :meta private:
     """
     config = ActivationCacheConfig(
         cache_dir=cache_dir,
@@ -551,6 +902,7 @@ def collect_and_cache_activations(
         experiment_name=experiment_name,
         buffer_size=buffer_size,
         use_token_sampling=use_token_sampling,
+        cleanup_on_start=cleanup_on_start,
     )
 
     sampler_config = None

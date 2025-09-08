@@ -4,7 +4,7 @@ Interpretability tools for transformer-based Physical AI and robotics models.
 
 ## Attention maps
 
-![Visualised attention maps for a robot picking up coffee capsules](https://github.com/villekuosmanen/physical-AI-attention-mapper/blob/main/assets/attention_coffee_prop.gif)
+![Visualised attention maps for a robot picking up coffee capsules](https://github.com/villekuosmanen/physical-ai-interpretability/blob/main/assets/attention_coffee_prop.gif)
 
 This project is more of an experiment rather than complete a library with a stable API so do keep that in mind.
 
@@ -18,8 +18,8 @@ python examples/visualise_original_data_attention.py --dataset-repo-id lerobot/s
 
 Pre-trained policy part may look something like this: `../lerobot/outputs/train/act_johns_arm/checkpoints/last/pretrained_model`
 
-If you get an error with `ModuleNotFoundError: No module named 'src'`, set the `PYTHONPATH` environment variable to the location of `physical-AI-attention-mapper` in your local directory, e.g.  
-`PYTHONPATH=/home/ville/physical-AI-attention-mapper:$PYTHONPATH`.
+If you get an error with `ModuleNotFoundError: No module named 'src'`, set the `PYTHONPATH` environment variable to the location of `physical-ai-interpretability` in your local directory, e.g.  
+`PYTHONPATH=/home/ville/physical-ai-interpretability:$PYTHONPATH`.
 
 ### Use at test-time
 

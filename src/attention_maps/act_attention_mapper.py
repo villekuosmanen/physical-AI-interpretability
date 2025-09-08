@@ -93,7 +93,8 @@ class ACTPolicyWithAttention:
         
         # Call the original policy's select_action
         with torch.inference_mode():
-            action = self.policy.select_action(observation, force_model_run=True)
+            action = self.policy.select_action(observation)
+            self.policy.reset()
         
         # Remove the hook
         handle.remove()

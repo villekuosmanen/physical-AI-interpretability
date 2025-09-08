@@ -204,7 +204,9 @@ def create_multimodal_sae(
     use_bfloat16: bool = False
 ) -> nn.Module:
     """
-    Factory function to SAE models with bfloat16 support
+    Factory function to SAE models with bfloat16 support.
+
+    :meta private:
     """
     return MultiModalSAE(
         num_tokens=num_tokens,
@@ -225,5 +227,7 @@ def prepare_batch_for_bfloat16(batch: torch.Tensor, device: str = 'cuda') -> tor
         
     Returns:
         Tensor converted to bfloat16 on target device
+
+    :meta private:
     """
     return batch.to(device=device, dtype=torch.bfloat16)
