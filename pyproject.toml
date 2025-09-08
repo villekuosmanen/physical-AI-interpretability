@@ -9,7 +9,7 @@ description = "Tools for interpretability analysis of physical AI models, includ
 readme = "README.md"
 license = {file = "LICENSE"}
 authors = [
-    {name = "Ville", email = "ville@example.com"}
+    {name = "Ville Kuosmanen"}
 ]
 classifiers = [
     "Development Status :: 3 - Alpha",

@@ -34,8 +34,14 @@ clean:
 api-rebuild:
 	sphinx-apidoc --force -a -o source .. ../src/utils/naming.py
 	@$(SPHINXBUILD) -M html "$(SOURCEDIR)" "$(BUILDDIR)" $(SPHINXOPTS) $(O)
+	@touch "$(BUILDDIR)/html/.nojekyll"
 
-.PHONY: help html serve docs-serve clean api-rebuild Makefile
+# Build for GitHub Pages deployment
+github-pages: api-rebuild
+	@echo "Documentation built for GitHub Pages deployment"
+	@echo "Built files are in $(BUILDDIR)/html/"
+
+.PHONY: help html serve docs-serve clean api-rebuild github-pages Makefile
 
 # Catch-all target: route all unknown targets to Sphinx using the new
 # "make mode" option.  $(O) is meant as a shortcut for $(SPHINXOPTS).
