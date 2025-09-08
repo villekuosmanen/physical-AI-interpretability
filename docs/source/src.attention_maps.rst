@@ -4,10 +4,13 @@ src.attention\_maps package
 Submodules
 ----------
 
-.. toctree::
-   :maxdepth: 4
+src.attention\_maps.act\_attention\_mapper module
+-------------------------------------------------
 
-   src.attention_maps.act_attention_mapper
+.. automodule:: src.attention_maps.act_attention_mapper
+   :members:
+   :undoc-members:
+   :show-inheritance:
 
 Module contents
 ---------------

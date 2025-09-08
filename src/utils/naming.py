@@ -29,6 +29,8 @@ def get_repo_hash(repo_id: str, length: int = 8) -> str:
         'a1b2c3d4'
         >>> get_repo_hash("very/long/repository/name/that/might/cause/issues")
         'e5f6a7b8'
+
+    :meta private:
     """
     if length <= 0:
         raise ValueError("Length must be positive")
@@ -59,6 +61,8 @@ def get_experiment_name(repo_id: str, prefix: str = "sae", include_repo_hint: bo
         'sae_coffee-task_a1b2c3d4'
         >>> get_experiment_name("very/long/name", include_repo_hint=False)
         'sae_e5f6a7b8'
+
+    :meta private:
     """
     repo_hash = get_repo_hash(repo_id)
     
@@ -87,5 +91,7 @@ def get_cache_name(repo_id: str) -> str:
     Examples:
         >>> get_cache_name("huggingface/coffee-task")
         'coffee-task_a1b2c3d4'
+
+    :meta private:
     """
     return get_experiment_name(repo_id, prefix="", include_repo_hint=True).lstrip('_')

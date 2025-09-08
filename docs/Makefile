@@ -32,7 +32,7 @@ clean:
 
 # Regenerate API docs and build
 api-rebuild:
-	sphinx-apidoc -a -o source .. --force --separate
+	sphinx-apidoc --force -a -o source .. ../src/utils/naming.py
 	@$(SPHINXBUILD) -M html "$(SOURCEDIR)" "$(BUILDDIR)" $(SPHINXOPTS) $(O)
 
 .PHONY: help html serve docs-serve clean api-rebuild Makefile

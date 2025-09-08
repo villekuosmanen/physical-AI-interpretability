@@ -18,16 +18,16 @@ from src.sae.token_sampler import TokenSampler, TokenSamplerConfig
 
 class OODDetector:
     """
-    OOD detector that uses a SAE model to detect OOD samples using the reconstruction error
-    of the underlying ACT model's attention patterns.
+    Out-of-distribution detector based on detecting unusual attention patterns.
+    
+    Builds on the SAE model trained to extract features from a given ACT policy.
+    It uses the SAE's reconstruction error as a proxy for scenarios that are deemed out of distribution.
     """
     
     def __init__(
         self, 
         policy: ACTPolicy, 
-        sae_model: Optional[MultiModalSAE] = None,
-        sae_experiment_path: Optional[str] = None,
-        layer_name: Optional[str] = None,
+        sae_experiment_path: str,
         ood_params_path: Optional[Path] = None,
         force_ood_refresh: bool = False,
         device: str = 'cuda',
@@ -37,41 +37,16 @@ class OODDetector:
         
         # Load SAE model and config - either provided directly or from experiment path
         self.sae_config = None
-        if sae_model is not None:
-            self.sae_model = sae_model
-            # If layer_name not provided, try to infer from policy
-            if layer_name is None:
-                self.layer_name = self._infer_layer_name_from_policy()
-            else:
-                self.layer_name = layer_name
-            # No config available when SAE model is provided directly
-            self.sae_config = None
-        elif sae_experiment_path is not None:
-            logging.info(f"Loading SAE model from experiment: {sae_experiment_path}")
-            builder = SAEBuilder(device=device)
-            self.sae_model = builder.load_from_experiment(sae_experiment_path)
-            
-            # Load config to get layer name
-            config_path = Path(sae_experiment_path) / "config.json"
-            if config_path.exists():
-                with open(config_path, 'r') as f:
-                    self.sae_config = json.load(f)
-                
-                # Use layer name from config if available, otherwise infer
-                if layer_name is None:
-                    self.layer_name = self.sae_config.get('layer_name')
-                    if self.layer_name is None:
-                        self.layer_name = self._infer_layer_name_from_policy()
-                        logging.warning(f"No layer_name in SAE config, inferred: {self.layer_name}")
-                    else:
-                        logging.info(f"Using layer name from SAE config: {self.layer_name}")
-                else:
-                    self.layer_name = layer_name
-            else:
-                logging.warning(f"No config.json found at {config_path}, inferring layer name")
-                self.layer_name = layer_name or self._infer_layer_name_from_policy()
-        else:
-            raise ValueError("Either sae_model or sae_experiment_path must be provided")
+        logging.info(f"Loading SAE model from experiment: {sae_experiment_path}")
+        builder = SAEBuilder(device=device)
+        self.sae_model = builder.load_from_experiment(sae_experiment_path)
+        self.layer_name = self._infer_layer_name_from_policy()
+        
+        # Load config if exists
+        config_path = Path(sae_experiment_path) / "config.json"
+        if config_path.exists():
+            with open(config_path, 'r') as f:
+                self.sae_config = json.load(f)
         
         # Set SAE to eval mode
         self.sae_model.eval()
@@ -186,6 +161,12 @@ class OODDetector:
         save_path: Optional[str] = None,
     ) -> Dict[str, float]:
         """
+        Calibrate the out-of-duistribution detector on an unseen validation dataset.
+        
+        This method runs the OOD Detector for each frame in the dataset, and fits the results on a Gaussian distribution.
+        Anything above the specified standard deviation threshold (defaults to σ=2.5) is deemed out of distribution.
+        While the default value will work for many datasets we recommend tuning it with a value that works best for your own datasets.
+
         Fit the OOD threshold to the validation dataset using Gaussian distribution fitting.
         
         Args:

@@ -4,11 +4,13 @@ src.utils package
 Submodules
 ----------
 
-.. toctree::
-   :maxdepth: 4
+src.utils.dataset\_factory module
+---------------------------------
 
-   src.utils.dataset_factory
-   src.utils.naming
+.. automodule:: src.utils.dataset_factory
+   :members:
+   :undoc-members:
+   :show-inheritance:
 
 Module contents
 ---------------

@@ -7,14 +7,14 @@
 
 import os
 import sys
-sys.path.insert(0, '/Users/work/physical-AI-attention-mapper')
+sys.path.insert(0, '/home/ville/physical-AI-attention-mapper')
 
 # -- Project information -----------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#project-information
 
-project = 'physical-AI-attention-mapper'
-copyright = '2025, Author'
-author = 'Author'
+project = 'physical-AI-interpretability'
+copyright = '2025, Ville Kuosmanen'
+author = 'Ville Kuosmanen'
 
 # -- General configuration ---------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#general-configuration
