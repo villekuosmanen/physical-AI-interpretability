@@ -14,7 +14,11 @@ from .token_sampler import TokenSamplerConfig, TokenSampler
 
 @dataclass
 class ActivationCacheConfig:
-    """Configuration for activation caching"""
+    """
+    Configuration for activation caching.
+    
+    :meta private:
+    """
     # Cache settings
     cache_dir: str = "./output/activation_cache"
     buffer_size: int = 128  # Number of samples per cache file
@@ -34,7 +38,9 @@ class ActivationCacheConfig:
 
 class ActivationCache:
     """
-    Manages caching of activations to disk for memory-efficient SAE training
+    Manages caching of activations to disk for memory-efficient SAE training.
+
+    :meta private:
     """
     
     def __init__(
@@ -401,7 +407,9 @@ class ActivationCache:
 
 class CachedActivationDataset(torch.utils.data.Dataset):
     """
-    Dataset that loads activations from cached files
+    Dataset that loads activations from cached files.
+
+    :meta private:
     """
     
     def __init__(self, cache_dir: str, shuffle: bool = True, preload_buffers: int = 2):
@@ -522,7 +530,9 @@ class CachedActivationDataset(torch.utils.data.Dataset):
 
 class ActivationCollector:
     """
-    Memory-efficient activation collector that caches to disk
+    Memory-efficient activation collector that caches to disk.
+
+    :meta private:
     """
     
     def __init__(
@@ -679,6 +689,8 @@ def is_cache_valid(cache_dir: str) -> bool:
         
     Returns:
         True if cache is valid (complete or resumable), False otherwise
+
+    :meta private:
     """
     cache_path = Path(cache_dir)
     
@@ -734,6 +746,8 @@ def get_cache_status(cache_dir: str) -> dict:
         
     Returns:
         Dictionary with cache status information
+
+    :meta private:
     """
     cache_path = Path(cache_dir)
     
@@ -789,6 +803,8 @@ def cleanup_invalid_cache(cache_dir: str) -> None:
     
     Args:
         cache_dir: Directory to clean up
+
+    :meta private:
     """
     cache_path = Path(cache_dir)
     
@@ -817,6 +833,8 @@ def create_cached_dataloader(
         
     Returns:
         DataLoader for cached activations
+
+    :meta private:
     """
     dataset = CachedActivationDataset(
         cache_dir=cache_dir,
@@ -875,6 +893,8 @@ def collect_and_cache_activations(
         
     Returns:
         Path to cache directory
+
+    :meta private:
     """
     config = ActivationCacheConfig(
         cache_dir=cache_dir,

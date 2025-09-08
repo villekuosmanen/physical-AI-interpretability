@@ -4,14 +4,6 @@ src.sae package
 Submodules
 ----------
 
-src.sae.activation\_collector module
-------------------------------------
-
-.. automodule:: src.sae.activation_collector
-   :members:
-   :undoc-members:
-   :show-inheritance:
-
 src.sae.builder module
 ----------------------
 

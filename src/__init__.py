@@ -17,11 +17,8 @@ from .sae import (
     TokenSampler,
     TokenSamplerConfig,
     MultiModalSAE,
-    create_multimodal_sae,
     SAEBuilder,
     load_sae_model_simple,
-    collect_and_cache_activations,
-    create_cached_dataloader,
 )
 from .attention_maps import ACTPolicyWithAttention
 from .ood import OODDetector, create_default_ood_params_path
@@ -38,12 +35,8 @@ __all__ = [
     "load_sae_model_simple",
     # SAE Components
     "MultiModalSAE", 
-    "create_multimodal_sae",
     "TokenSampler",
     "TokenSamplerConfig",
-    # Data Collection
-    "collect_and_cache_activations",
-    "create_cached_dataloader",
     # OOD Detection
     "OODDetector",
     "create_default_ood_params_path", 

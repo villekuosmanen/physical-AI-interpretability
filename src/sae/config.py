@@ -57,11 +57,13 @@ class SAETrainingConfig:
     
     def infer_model_params(self, policy, token_sampler_config=None):
         """
-        Infer num_tokens and token_dim from the policy model and token sampling configuration
+        Infer num_tokens and token_dim from the policy model and token sampling configuration.
         
         Args:
             policy: The ACT policy model
-            token_sampler_config: TokenSamplerConfig object for token sampling
+            token_sampler_config: TokenSamplerConfig object for token sampling.
+
+        :meta private:
         """
         # Infer token_dim from the model
         # Typically this is the hidden dimension of the encoder
