@@ -16,8 +16,8 @@ import numpy as np
 import torch
 from tqdm import tqdm
 
-from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.common.policies.factory import make_policy
+from lerobot.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.policies.factory import make_policy
 from lerobot.configs.policies import PreTrainedConfig
 
 from src.attention_maps import ACTPolicyWithAttention
@@ -219,7 +219,6 @@ def analyze_episode(dataset: LeRobotDataset,
         print("=" * 30)
     
     # Process each frame
-    # proprio_ratios = []
     for i in tqdm(range(episode_length), desc="Processing frames"):
         frame = dataset[episode_frames[i]['index'].item()]
         timestamps.append(frame['timestamp'].item())
@@ -312,7 +311,7 @@ def main():
                         help="Episode ID to analyze (if not specified, analyzes all episodes)")
     parser.add_argument("--policy-path", type=str, required=True,
                         help="Path to the policy checkpoint")
-    parser.add_argument("--output-dir", type=str, default="./analysis_output",
+    parser.add_argument("--output-dir", type=str, default="./output/analysis_output",
                         help="Directory to save analysis results")
     parser.add_argument("--policy-overrides", type=str, nargs="*",
                         help="Policy config overrides in key=value format")
