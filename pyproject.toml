@@ -16,14 +16,12 @@ classifiers = [
     "Intended Audience :: Science/Research",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.8",
-    "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
     "Topic :: Scientific/Engineering :: Visualization",
 ]
-requires-python = ">=3.8"
+requires-python = ">=3.10"
 dependencies = [
     # Core dependencies
     "torch>=1.12.0",
@@ -45,7 +43,7 @@ dependencies = [
     "lerobot",
     
     # Optional dependencies for development
-    "dataclasses;python_version<'3.7'",  # Backport for older Python
+    "dataclasses;python_version<'3.9'",  # Backport for older Python
 ]
 
 [project.optional-dependencies]
@@ -113,7 +111,7 @@ line_length = 88
 known_first_party = ["src"]
 
 [tool.mypy]
-python_version = "3.8"
+python_version = "3.10"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = false

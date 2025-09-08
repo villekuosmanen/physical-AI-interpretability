@@ -1,5 +1,10 @@
 # Physical AI Interpretability
 
+[![PyPI version](https://badge.fury.io/py/physical-ai-interpretability.svg)](https://badge.fury.io/py/physical-ai-interpretability)
+[![Documentation Status](https://github.com/villekuosmanen/physical-AI-attention-mapper/actions/workflows/docs.yml/badge.svg)](https://villekuosmanen.github.io/physical-AI-attention-mapper/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
+
 Interpretability tools for transformer-based Physical AI and robotics models. Built on [LeRobot](https://github.com/huggingface/lerobot).
 
 ## Installation
