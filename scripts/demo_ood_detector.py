@@ -36,7 +36,7 @@ def main():
     parser.add_argument("--device", type=str, default="cuda", help="Device to use")
     parser.add_argument("--max-validation-samples", type=int, default=1000,
                         help="Maximum number of validation samples for threshold fitting")
-    parser.add_argument("--std-threshold", type=float, default=3.0,
+    parser.add_argument("--std-threshold", type=float, default=2.5,
                         help="Number of standard deviations for OOD threshold")
     parser.add_argument("--force-ood-refresh", action="store_true",
                         help="Force refresh of OOD parameters (ignore existing cache)")
@@ -103,7 +103,7 @@ def main():
         print(f"\n3. Fitting OOD threshold on validation dataset...")
         ood_params = ood_detector.fit_ood_threshold_to_validation_dataset(
             dataset=validation_dataset,
-            # std_threshold=args.std_threshold,
+            std_threshold=args.std_threshold,
             max_samples=args.max_validation_samples,
         )
     else:

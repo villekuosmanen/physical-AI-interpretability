@@ -58,6 +58,8 @@ To reproduce this demo, you will need to repeat the following steps:
 
 ### Out of distribution detection
 
+Check out [the blog post for how to build an out-of-distribution detector using the Physical AI Interpretability toolkit](https://villekuosmanen.medium.com/building-a-simple-out-of-distribution-detector-for-physical-ai-models-using-lerobot-bfa02b4a3876).
+
 The SAE trained for feature extraction also provides a neat implementation for out of distribution detection in robotics. The SAETrainer and OODDetector classes implement this.
 
 `scripts/demo_ood_detector.py` shows how to test the OOD Detector with a pre-trained SAE model. The call looks something like this:
