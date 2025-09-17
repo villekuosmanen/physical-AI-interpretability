@@ -27,8 +27,13 @@ def main():
     parser = argparse.ArgumentParser(description="Demo OOD detector functionality")
     parser.add_argument("--policy-path", type=str, required=True,
                         help="Path to the policy checkpoint")
-    parser.add_argument("--sae-experiment-path", type=str, required=True,
-                        help="Path to SAE experiment directory (e.g., output/sae_drop_footbag_into_di_838a8c8b)")
+    # SAE model loading options - either local experiment or Hub repo
+    sae_group = parser.add_mutually_exclusive_group(required=True)
+    sae_group.add_argument("--sae-experiment-path", type=str,
+                           help="Path to SAE experiment directory (e.g., output/sae_drop_footbag_into_di_838a8c8b)")
+    sae_group.add_argument("--sae-hub-repo-id", type=str,
+                           help="Hugging Face Hub repository ID for SAE model")
+    
     parser.add_argument("--validation-repo-id", type=str, required=True,
                         help="Repository ID of validation dataset for threshold fitting")
     parser.add_argument("--test-repo-id", type=str,
@@ -40,6 +45,12 @@ def main():
                         help="Number of standard deviations for OOD threshold")
     parser.add_argument("--force-ood-refresh", action="store_true",
                         help="Force refresh of OOD parameters (ignore existing cache)")
+    
+    # Hub-specific arguments
+    parser.add_argument("--hub-token", type=str,
+                        help="Hugging Face token for private repositories")
+    parser.add_argument("--hub-cache-dir", type=str,
+                        help="Cache directory for Hugging Face downloads")
     
     args = parser.parse_args()
     
@@ -55,7 +66,10 @@ def main():
     print("OOD Detector Demo")
     print("=" * 60)
     print(f"Policy path: {args.policy_path}")
-    print(f"SAE experiment path: {args.sae_experiment_path}")
+    if args.sae_experiment_path:
+        print(f"SAE experiment path: {args.sae_experiment_path}")
+    else:
+        print(f"SAE Hub repo: {args.sae_hub_repo_id}")
     print(f"Validation dataset: {args.validation_repo_id}")
     print(f"Device: {device}")
     print()
@@ -79,23 +93,40 @@ def main():
     
     # Step 2: Create OOD detector (will automatically load SAE)
     print("\n2. Creating OOD detector...")
-    # Create path for OOD parameters
-    experiment_name = Path(args.sae_experiment_path).name
-    ood_params_path = create_default_ood_params_path(experiment_name)
     
-    ood_detector = OODDetector(
-        policy=policy,
-        sae_experiment_path=args.sae_experiment_path,
-        ood_params_path=ood_params_path,
-        force_ood_refresh=True,
-        device=args.device,
-    )
+    # Determine OOD params path and source info
+    if args.sae_experiment_path:
+        experiment_name = Path(args.sae_experiment_path).name
+        ood_params_path = create_default_ood_params_path(experiment_name)
+        source_info = f"SAE model loaded from: {args.sae_experiment_path}"
+        
+        ood_detector = OODDetector(
+            policy=policy,
+            sae_experiment_path=args.sae_experiment_path,
+            ood_params_path=ood_params_path,
+            force_ood_refresh=args.force_ood_refresh,
+            device=args.device,
+        )
+    else:
+        # Using Hub model - OOD params will be auto-managed
+        ood_params_path = None
+        source_info = f"SAE model loaded from Hub: {args.sae_hub_repo_id}"
+        
+        ood_detector = OODDetector(
+            policy=policy,
+            sae_hub_repo_id=args.sae_hub_repo_id,
+            force_ood_refresh=args.force_ood_refresh,
+            device=args.device,
+            hub_token=args.hub_token,
+            hub_cache_dir=args.hub_cache_dir,
+        )
         
     print(f"✓ OOD detector created successfully")
-    print(f"  SAE model loaded from: {args.sae_experiment_path}")
-    print(f"  OOD params path: {ood_params_path}")
+    print(f"  {source_info}")
+    if ood_params_path:
+        print(f"  OOD params path: {ood_params_path}")
     print(f"  Force OOD refresh: {args.force_ood_refresh}")
-    print(f"  OOD params status: {'Will be refreshed' if args.force_ood_refresh else ('Loaded from cache' if ood_detector.ood_params else 'Not found, will be fitted')}")
+    print(f"  OOD params status: {'Will be refreshed' if args.force_ood_refresh else ('Loaded from cache/Hub' if ood_detector.ood_params else 'Not found, will be fitted')}")
         
     
     # Step 3: Fit OOD threshold on validation data (if needed)
@@ -179,7 +210,10 @@ def main():
     
     print(f"\n{'='*60}")
     print("Demo completed successfully!")
-    print(f"OOD parameters saved to: {ood_params_path}")
+    if ood_params_path:
+        print(f"OOD parameters saved to: {ood_params_path}")
+    elif args.sae_hub_repo_id:
+        print(f"OOD parameters saved to Hub repo: {args.sae_hub_repo_id}")
     print("You can now use this OOD detector in your applications.")
     print("="*60)
 

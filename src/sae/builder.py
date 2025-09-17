@@ -7,6 +7,7 @@ from typing import Optional, Dict, Any
 
 import torch
 from safetensors.torch import load_file
+from huggingface_hub import hf_hub_download
 
 from .sae import MultiModalSAE, create_multimodal_sae
 
@@ -161,6 +162,53 @@ class SAEBuilder:
                 raise FileNotFoundError("Could not find config.json file. Please provide config_path explicitly.")
         
         return self.load_from_files(str(model_path), str(config_path))
+
+    def load_from_hub(
+        self, 
+        repo_id: str,
+        filename: str = "model.safetensors",
+        config_filename: str = "config.json",
+        revision: str = "main",
+        cache_dir: Optional[str] = None,
+        force_download: bool = False,
+        token: Optional[str] = None
+    ) -> MultiModalSAE:
+        """
+        Load SAE model from Hugging Face Hub.
+        
+        Args:
+            repo_id: Repository ID on Hugging Face Hub
+            filename: Model filename to download
+            config_filename: Config filename to download  
+            revision: Git revision (branch/tag/commit)
+            cache_dir: Local cache directory
+            force_download: Force re-download even if cached
+            token: Hugging Face token for private repos
+            
+        Returns:
+            Loaded SAE model
+        """
+        # Download model file
+        model_file = hf_hub_download(
+            repo_id=repo_id,
+            filename=filename,
+            revision=revision,
+            cache_dir=cache_dir,
+            force_download=force_download,
+            token=token,
+        )
+        
+        # Download config file
+        config_file = hf_hub_download(
+            repo_id=repo_id,
+            filename=config_filename,
+            revision=revision,
+            cache_dir=cache_dir,
+            force_download=force_download,
+            token=token,
+        )
+        
+        return self.load_from_files(model_file, config_file)
 
     @classmethod 
     def from_default_path(

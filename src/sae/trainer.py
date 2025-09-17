@@ -2,6 +2,7 @@ import json
 import logging
 from pathlib import Path
 from typing import Optional, Dict
+from tempfile import TemporaryDirectory
 
 import numpy as np
 import torch
@@ -11,6 +12,7 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 import wandb
 from safetensors.torch import save_file, load_file
+from huggingface_hub import HfApi, hf_hub_download
 
 from lerobot.policies.factory import make_policy
 from lerobot.configs.policies import PreTrainedConfig
@@ -45,6 +47,12 @@ class SAETrainer():
         use_wandb: bool = False,
         wandb_project_name: str = "physical_ai_interpretability",
         sae_config: Optional[SAETrainingConfig] = None,
+        # Hugging Face integration parameters
+        upload_to_hub: bool = False,
+        hub_repo_id: Optional[str] = None,
+        hub_private: bool = True,
+        hub_license: str = "mit",
+        hub_tags: Optional[list] = None,
     ):
         # Load policy
         policy_cfg = PreTrainedConfig.from_pretrained(policy_path)
@@ -101,6 +109,13 @@ class SAETrainer():
         self.activation_cache_path = activation_cache_path
         self.use_wandb = use_wandb
         self.wandb_project_name = wandb_project_name
+
+        # Store Hugging Face parameters
+        self.upload_to_hub = upload_to_hub
+        self.hub_repo_id = hub_repo_id
+        self.hub_private = hub_private
+        self.hub_license = hub_license
+        self.hub_tags = hub_tags or ["sae", "sparse-autoencoder", "robotics", "out-of-distribution"]
 
         # Store token sampler config for activation collection
         self.token_sampler_config = token_sampler_config
@@ -313,6 +328,154 @@ class SAETrainer():
             
             logging.info(f"Saved best checkpoint at epoch {epoch} - Model: {best_model_path.name}")
 
+    def save_complete_model(self, model: nn.Module, epoch: int = None):
+        """
+        Save the complete model in a 'complete' folder ready for Hugging Face upload.
+        This includes model.safetensors, config.json, and training_state.pt
+        """
+        # Create complete folder
+        complete_dir = self.final_output_directory / "complete"
+        complete_dir.mkdir(exist_ok=True)
+        
+        # Save model weights as model.safetensors (standard HF naming)
+        model_path = complete_dir / "model.safetensors"
+        save_file(model.state_dict(), model_path)
+        
+        # Copy or create config.json
+        source_config = self.final_output_directory / "config.json"
+        dest_config = complete_dir / "config.json"
+        if source_config.exists():
+            # Copy existing config
+            import shutil
+            shutil.copy2(source_config, dest_config)
+        else:
+            # Create minimal config
+            config_dict = self.config.__dict__.copy()
+            config_dict.update({
+                'repo_id': self.repo_id,
+                'repo_hash': get_repo_hash(self.repo_id),
+                'layer_name': self.layer_name,
+                'experiment_name': getattr(self, 'experiment_name', 'unknown')
+            })
+            with open(dest_config, 'w') as f:
+                json.dump(config_dict, f, indent=2)
+        
+        # Save training state (if available)
+        training_state_path = complete_dir / "training_state.pt"
+        if epoch is not None:
+            # Copy the training state from specific epoch
+            source_state = self.final_output_directory / f"training_state_epoch_{epoch}.pt"
+        else:
+            # Use best training state if available
+            source_state = self.final_output_directory / "best_training_state.pt"
+            if not source_state.exists():
+                # Find latest training state
+                state_files = list(self.final_output_directory.glob("training_state_epoch_*.pt"))
+                if state_files:
+                    source_state = max(state_files, key=lambda x: int(x.stem.split('_')[-1]))
+        
+        if source_state.exists():
+            import shutil
+            shutil.copy2(source_state, training_state_path)
+        
+        logging.info(f"Saved complete model to: {complete_dir}")
+        return complete_dir
+
+    def push_model_to_hub(self, complete_model_dir: Path):
+        """
+        Push the complete model to Hugging Face Hub
+        """
+        if not self.upload_to_hub:
+            logging.info("Hub upload disabled, skipping...")
+            return None
+            
+        if not self.hub_repo_id:
+            raise ValueError("hub_repo_id must be specified to upload to Hub")
+        
+        api = HfApi()
+        
+        # Create repo
+        repo_info = api.create_repo(
+            repo_id=self.hub_repo_id, 
+            private=self.hub_private, 
+            exist_ok=True
+        )
+        
+        logging.info(f"Created/accessed Hub repo: {repo_info.repo_id}")
+        
+        # Generate model card
+        readme_content = self.generate_model_card()
+        readme_path = complete_model_dir / "README.md"
+        with open(readme_path, 'w') as f:
+            f.write(readme_content)
+        
+        # Upload folder
+        commit_info = api.upload_folder(
+            repo_id=repo_info.repo_id,
+            repo_type="model",
+            folder_path=complete_model_dir,
+            commit_message="Upload SAE model weights, config, and training state",
+            allow_patterns=["*.safetensors", "*.json", "*.pt", "*.md"],
+            ignore_patterns=["*.tmp", "*.log", "__pycache__/*"],
+        )
+        
+        logging.info(f"Model pushed to Hub: {commit_info.repo_url.url}")
+        return commit_info
+
+    def generate_model_card(self) -> str:
+        """Generate a model card for the SAE model"""
+        card_content = f"""# Sparse Autoencoder (SAE) Model
+
+This model is a Sparse Autoencoder trained for interpretability analysis of robotics policies.
+
+## Model Details
+
+- **Architecture**: Multi-modal Sparse Autoencoder
+- **Training Dataset**: `{self.repo_id}`
+- **Layer Target**: `{self.layer_name}`
+- **Tokens**: {self.config.num_tokens}
+- **Token Dimension**: {self.config.token_dim}
+- **Feature Dimension**: {self.config.feature_dim}
+- **Expansion Factor**: {self.config.expansion_factor}
+
+## Training Configuration
+
+- **Learning Rate**: {self.config.learning_rate}
+- **Batch Size**: {self.config.batch_size}
+- **L1 Penalty**: {self.config.l1_penalty}
+- **Epochs**: {self.config.num_epochs}
+- **Optimizer**: {self.config.optimizer}
+
+## Usage
+
+```python
+from src.sae.trainer import load_sae_from_hub
+
+# Load model from Hub
+model = load_sae_from_hub("{self.hub_repo_id}")
+
+# Or load using builder
+from src.sae.builder import SAEBuilder
+builder = SAEBuilder(device='cuda')
+model = builder.load_from_hub("{self.hub_repo_id}")
+```
+
+## Files
+
+- `model.safetensors`: The trained SAE model weights
+- `config.json`: Training and model configuration
+- `training_state.pt`: Complete training state (optimizer, scheduler, metrics)
+
+## License
+
+{self.hub_license}
+
+## Tags
+
+{', '.join(self.hub_tags)}
+"""
+        return card_content
+
     def load_checkpoint(self, model: nn.Module, optimizer: optim.Optimizer = None, 
                        scheduler = None, checkpoint_path: str = None, load_best: bool = False):
         """Load model checkpoint from safetensors format"""
@@ -515,10 +678,103 @@ class SAETrainer():
             logging.info(f"End of epoch {epoch+1}: {avg_epoch_metrics}")
         
         # Final save
-        self.save_checkpoint(model, optimizer, scheduler, self.config.num_epochs - 1)
+        final_epoch = self.config.num_epochs - 1
+        self.save_checkpoint(model, optimizer, scheduler, final_epoch)
+        
+        # Save complete model for potential Hub upload
+        complete_dir = self.save_complete_model(model, final_epoch)
+        
+        # Upload to Hub if requested
+        if self.upload_to_hub:
+            try:
+                commit_info = self.push_model_to_hub(complete_dir)
+                if commit_info:
+                    logging.info(f"Successfully uploaded model to Hub: {commit_info.repo_url.url}")
+            except Exception as e:
+                logging.error(f"Failed to upload model to Hub: {e}")
+                logging.info("Model training completed successfully, but Hub upload failed")
         
         logging.info("Training completed!")
         return model
+
+
+def load_sae_from_hub(
+    repo_id: str, 
+    filename: str = "model.safetensors",
+    config_filename: str = "config.json",
+    revision: str = "main",
+    cache_dir: Optional[str] = None,
+    force_download: bool = False,
+    token: Optional[str] = None,
+    device: str = 'cuda'
+):
+    """
+    Load SAE model from Hugging Face Hub
+    
+    Args:
+        repo_id: Repository ID on Hugging Face Hub
+        filename: Model filename to download
+        config_filename: Config filename to download  
+        revision: Git revision (branch/tag/commit)
+        cache_dir: Local cache directory
+        force_download: Force re-download even if cached
+        token: Hugging Face token for private repos
+        device: Device to load model on
+        
+    Returns:
+        Loaded SAE model
+    """
+    from src.sae import create_multimodal_sae
+    
+    # Download model file
+    model_file = hf_hub_download(
+        repo_id=repo_id,
+        filename=filename,
+        revision=revision,
+        cache_dir=cache_dir,
+        force_download=force_download,
+        token=token,
+    )
+    
+    # Download config file
+    config_file = hf_hub_download(
+        repo_id=repo_id,
+        filename=config_filename,
+        revision=revision,
+        cache_dir=cache_dir,
+        force_download=force_download,
+        token=token,
+    )
+    
+    # Load config
+    with open(config_file, 'r') as f:
+        config_dict = json.load(f)
+    
+    # Extract model parameters
+    num_tokens = config_dict.get('num_tokens')
+    token_dim = config_dict.get('token_dim') 
+    feature_dim = config_dict.get('feature_dim')
+    
+    if any(param is None for param in [num_tokens, token_dim, feature_dim]):
+        raise ValueError("Config file missing required parameters: num_tokens, token_dim, feature_dim")
+    
+    # Create model
+    model = create_multimodal_sae(
+        num_tokens=num_tokens,
+        token_dim=token_dim,
+        feature_dim=feature_dim,
+        device=device
+    )
+    
+    # Load weights from safetensors
+    model_state = load_file(model_file)
+    model.load_state_dict(model_state)
+    model.eval()
+    
+    logging.info(f"Loaded SAE model from Hub: {repo_id}")
+    logging.info(f"Model config: {num_tokens} tokens, {token_dim} dim, {feature_dim} features")
+    
+    return model
 
 
 def load_sae_model(model_path: str, config_path: str = None, device: str = 'cuda'):
