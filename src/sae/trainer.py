@@ -424,14 +424,27 @@ class SAETrainer():
 
     def generate_model_card(self) -> str:
         """Generate a model card for the SAE model"""
-        card_content = f"""# Sparse Autoencoder (SAE) Model
+        # Generate YAML frontmatter
+        yaml_tags = '\n'.join([f'- {tag}' for tag in self.hub_tags])
+        
+        card_content = f"""---
+license: {self.hub_license}
+tags:
+{yaml_tags}
+datasets:
+- {self.repo_id}
+library_name: physical-ai-interpretability
+---
 
-This model is a Sparse Autoencoder trained for interpretability analysis of robotics policies.
+# Sparse Autoencoder (SAE) Model
+
+This model is a Sparse Autoencoder trained for interpretability analysis of robotics policies using the LeRobot framework.
 
 ## Model Details
 
 - **Architecture**: Multi-modal Sparse Autoencoder
 - **Training Dataset**: `{self.repo_id}`
+- **Base Policy**: LeRobot ACT policy
 - **Layer Target**: `{self.layer_name}`
 - **Tokens**: {self.config.num_tokens}
 - **Token Dimension**: {self.config.token_dim}
@@ -460,19 +473,47 @@ builder = SAEBuilder(device='cuda')
 model = builder.load_from_hub("{self.hub_repo_id}")
 ```
 
+## Out-of-Distribution Detection
+
+This SAE model can be used for OOD detection with LeRobot policies:
+
+```python
+from src.ood import OODDetector
+
+# Create OOD detector with Hub-loaded SAE
+ood_detector = OODDetector(
+    policy=your_policy,
+    sae_hub_repo_id="{self.hub_repo_id}"
+)
+
+# Fit threshold and use for detection
+ood_detector.fit_ood_threshold_to_validation_dataset(validation_dataset)
+is_ood, error = ood_detector.is_out_of_distribution(observation)
+```
+
 ## Files
 
 - `model.safetensors`: The trained SAE model weights
 - `config.json`: Training and model configuration
 - `training_state.pt`: Complete training state (optimizer, scheduler, metrics)
+- `ood_params.json`: OOD detection parameters (if fitted)
 
-## License
+## Citation
 
-{self.hub_license}
+If you use this model in your research, please cite:
 
-## Tags
+```bibtex
+@misc{{sae_model,
+  title={{Sparse Autoencoder for {self.repo_id.split('/')[-1].replace('_', ' ').title()}}},
+  author={{Your Name}},
+  year={{2024}},
+  url={{https://huggingface.co/{self.hub_repo_id}}}
+}}
+```
 
-{', '.join(self.hub_tags)}
+## Framework
+
+This model was trained using the [physical-ai-interpretability](https://github.com/your-repo/physical-ai-interpretability) framework with [LeRobot](https://github.com/huggingface/lerobot).
 """
         return card_content
 

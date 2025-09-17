@@ -46,12 +46,6 @@ def main():
     parser.add_argument("--force-ood-refresh", action="store_true",
                         help="Force refresh of OOD parameters (ignore existing cache)")
     
-    # Hub-specific arguments
-    parser.add_argument("--hub-token", type=str,
-                        help="Hugging Face token for private repositories")
-    parser.add_argument("--hub-cache-dir", type=str,
-                        help="Cache directory for Hugging Face downloads")
-    
     args = parser.parse_args()
     
     # Set up logging
@@ -117,8 +111,6 @@ def main():
             sae_hub_repo_id=args.sae_hub_repo_id,
             force_ood_refresh=args.force_ood_refresh,
             device=args.device,
-            hub_token=args.hub_token,
-            hub_cache_dir=args.hub_cache_dir,
         )
         
     print(f"✓ OOD detector created successfully")
