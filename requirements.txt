@@ -1,7 +1,0 @@
-numpy
-opencv-python
-pandas
-safetensors
-torch
-tqdm
-wandb

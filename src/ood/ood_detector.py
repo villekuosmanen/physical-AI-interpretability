@@ -8,6 +8,7 @@ import torch
 from tqdm import tqdm
 from torch.utils.data import DataLoader
 from scipy import stats
+from huggingface_hub import hf_hub_download, HfApi
 
 from lerobot.policies.act.modeling_act import ACTPolicy
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
@@ -27,7 +28,8 @@ class OODDetector:
     def __init__(
         self, 
         policy: ACTPolicy, 
-        sae_experiment_path: str,
+        sae_experiment_path: Optional[str] = None,
+        sae_hub_repo_id: Optional[str] = None,
         ood_params_path: Optional[Path] = None,
         force_ood_refresh: bool = False,
         device: str = 'cuda',
@@ -35,18 +37,51 @@ class OODDetector:
         self.policy = policy
         self.device = device
         
-        # Load SAE model and config - either provided directly or from experiment path
-        self.sae_config = None
-        logging.info(f"Loading SAE model from experiment: {sae_experiment_path}")
-        builder = SAEBuilder(device=device)
-        self.sae_model = builder.load_from_experiment(sae_experiment_path)
-        self.layer_name = self._infer_layer_name_from_policy()
+        # Validate input - need either experiment path or hub repo_id
+        if not sae_experiment_path and not sae_hub_repo_id:
+            raise ValueError("Must provide either sae_experiment_path or sae_hub_repo_id")
+        if sae_experiment_path and sae_hub_repo_id:
+            raise ValueError("Cannot provide both sae_experiment_path and sae_hub_repo_id")
         
-        # Load config if exists
-        config_path = Path(sae_experiment_path) / "config.json"
-        if config_path.exists():
-            with open(config_path, 'r') as f:
-                self.sae_config = json.load(f)
+        # Load SAE model and config
+        self.sae_config = None
+        self.sae_source = None  # 'local' or 'hub'
+        self.sae_hub_repo_id = sae_hub_repo_id
+        
+        builder = SAEBuilder(device=device)
+        
+        if sae_hub_repo_id:
+            # Load from Hugging Face Hub
+            logging.info(f"Loading SAE model from Hub: {sae_hub_repo_id}")
+            self.sae_model = builder.load_from_hub(
+                repo_id=sae_hub_repo_id,
+            )
+            self.sae_source = 'hub'
+            
+            # Try to download config from Hub
+            try:
+                config_file = hf_hub_download(
+                    repo_id=sae_hub_repo_id,
+                    filename="config.json",
+                )
+                with open(config_file, 'r') as f:
+                    self.sae_config = json.load(f)
+            except Exception as e:
+                logging.warning(f"Could not load config from Hub: {e}")
+                
+        else:
+            # Load from local experiment path
+            logging.info(f"Loading SAE model from experiment: {sae_experiment_path}")
+            self.sae_model = builder.load_from_experiment(sae_experiment_path)
+            self.sae_source = 'local'
+            
+            # Load config if exists
+            config_path = Path(sae_experiment_path) / "config.json"
+            if config_path.exists():
+                with open(config_path, 'r') as f:
+                    self.sae_config = json.load(f)
+        
+        self.layer_name = self._infer_layer_name_from_policy()
         
         # Set SAE to eval mode
         self.sae_model.eval()
@@ -78,17 +113,37 @@ class OODDetector:
         self.force_ood_refresh = force_ood_refresh
         
         # Handle existing OOD parameters based on force_ood_refresh flag
-        if ood_params_path is not None and Path(ood_params_path).exists():
-            if force_ood_refresh:
-                logging.info(f"Force refresh requested - ignoring existing OOD params at {ood_params_path}")
-                # Don't load existing params, they will be overwritten on next fit
-            else:
+        if force_ood_refresh:
+            logging.info("Force refresh requested - will not load existing OOD params")
+        else:
+            # Try to load OOD parameters from various sources
+            loaded = False
+            
+            # 1. Try local path if provided
+            if ood_params_path is not None and Path(ood_params_path).exists():
                 logging.info(f"Loading existing OOD parameters from {ood_params_path}")
                 self._load_ood_params()
-        elif ood_params_path is not None:
-            logging.info(f"OOD params path specified but file doesn't exist: {ood_params_path}")
-        else:
-            logging.info("No OOD params path specified")
+                loaded = True
+            
+            # 2. Try downloading from Hub if SAE is from Hub and no local params found
+            elif self.sae_source == 'hub' and not loaded:
+                try:
+                    ood_params_file = hf_hub_download(
+                        repo_id=sae_hub_repo_id,
+                        filename="ood_params.json",
+                    )
+                    with open(ood_params_file, 'r') as f:
+                        self.ood_params = json.load(f)
+                    logging.info(f"Loaded OOD parameters from Hub: {sae_hub_repo_id}")
+                    loaded = True
+                except Exception as e:
+                    logging.info(f"Could not load OOD params from Hub: {e}")
+            
+            if not loaded:
+                if ood_params_path is not None:
+                    logging.info(f"OOD params path specified but file doesn't exist: {ood_params_path}")
+                else:
+                    logging.info("No OOD params found - will need to fit threshold")
         
         # Hook for activation extraction
         self._hook = None
@@ -251,11 +306,19 @@ class OODDetector:
             'max': float(np.max(reconstruction_errors)),
         }
         
-        # Save parameters
+        # Save parameters locally
         save_path = save_path or self.ood_params_path
         if save_path:
             self._save_ood_params(save_path)
             logging.info(f"OOD parameters {'refreshed and ' if self.force_ood_refresh else ''}saved to {save_path}")
+        
+        # Upload to Hub if the SAE model came from Hub
+        if self.sae_source == 'hub':
+            try:
+                self._upload_ood_params_to_hub()
+                logging.info(f"OOD parameters uploaded to Hub: {self.sae_hub_repo_id}")
+            except Exception as e:
+                logging.warning(f"Failed to upload OOD parameters to Hub: {e}")
         
         logging.info(f"OOD threshold fitted:")
         logging.info(f"  Mean: {mean:.6f}")
@@ -400,6 +463,35 @@ class OODDetector:
             json.dump(self.ood_params, f, indent=2)
         
         logging.info(f"Saved OOD parameters to {save_path}")
+    
+    def _upload_ood_params_to_hub(self):
+        """Upload OOD parameters to Hugging Face Hub"""
+        if not self.sae_hub_repo_id:
+            raise ValueError("No Hub repo ID available for upload")
+        
+        if not self.ood_params:
+            raise ValueError("No OOD parameters to upload")
+        
+        # Create temporary file with OOD parameters
+        from tempfile import NamedTemporaryFile
+        import os
+        
+        with NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
+            json.dump(self.ood_params, f, indent=2)
+            temp_path = f.name
+        
+        try:
+            # Upload to Hub
+            api = HfApi()
+            api.upload_file(
+                path_or_fileobj=temp_path,
+                path_in_repo="ood_params.json",
+                repo_id=self.sae_hub_repo_id,
+                commit_message="Update OOD parameters"
+            )
+        finally:
+            # Clean up temp file
+            os.unlink(temp_path)
     
     def get_ood_stats(self) -> Optional[Dict[str, float]]:
         """Get current OOD parameters and statistics"""
