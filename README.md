@@ -72,6 +72,8 @@ python scripts/demo_ood_detector.py \
     --sae-experiment-path output/sae_drop_footbag_into_di_838a8c8b
 ```
 
+You can also upload the saved SAE model to the Hugging Face Hub by setting the `--upload-to-hub` and `--hub-repo-id <model_repo_id>` params.
+
 ## Other cool stuff
 
 [Pikodata](https://github.com/villekuosmanen/pikodata) is a Data Studio designed for LeRobot Datasets, offering a UI for deleting episodes and frames, as well as editing language descriptions for LeRobot Datasets.
