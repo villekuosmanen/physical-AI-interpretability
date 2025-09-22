@@ -22,7 +22,7 @@ class MultiModalSAE(nn.Module):
         token_dim: int = 512, 
         feature_dim: int = 4096,
         use_bias: bool = True,
-        activation_fn: str = 'tanh',
+        activation_fn: str = 'leaky_relu',
         dropout_rate: float = 0.0,
         device: str = 'cuda',
         use_bfloat16: bool = False,
