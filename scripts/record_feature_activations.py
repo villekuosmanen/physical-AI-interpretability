@@ -77,6 +77,8 @@ class StreamingFeatureAnalyzer:
         self,
         config: FeatureAnalysisConfig,
         sampler_config: TokenSamplerConfig,
+        policy_model = None,
+        total_tokens: int = None,
     ):
         self.config = config
         self.output_dir = Path(config.output_dir)
@@ -86,8 +88,22 @@ class StreamingFeatureAnalyzer:
         self.episode_data_dir = Path(config.episode_data_dir)
         self.episode_data_dir.mkdir(parents=True, exist_ok=True)
         
+        # Infer total_tokens if not provided
+        if total_tokens is None and policy_model is not None:
+            from src.sae.config import SAETrainingConfig
+            temp_config = SAETrainingConfig()
+            total_tokens = temp_config._infer_original_num_tokens(policy_model)
+            if total_tokens is None:
+                total_tokens = 602  # Fallback default
+                logging.warning("Could not infer token count from model, using default 602")
+            else:
+                logging.info(f"Inferred {total_tokens} tokens from policy model for feature analysis")
+        elif total_tokens is None:
+            total_tokens = 602
+            logging.warning("No token count or policy model provided, using default 602")
+        
         # Initialize token sampler
-        self.token_sampler = TokenSampler(sampler_config)
+        self.token_sampler = TokenSampler(sampler_config, total_tokens)
         
         # Streaming data storage
         self.current_episode_data = []  # List of activation records
@@ -427,7 +443,7 @@ def record_sae_features(
     sae_model = sae_model.to(device)
     act_model = act_model.to(device)
     
-    analyzer = StreamingFeatureAnalyzer(config, sampler_config)
+    analyzer = StreamingFeatureAnalyzer(config, sampler_config, policy_model=act_model)
     logging.info("Using StreamingFeatureAnalyzer for memory-efficient processing")
     
     analyzer.save_feature_activations(sae_model, act_model, dataloader, target_layer)

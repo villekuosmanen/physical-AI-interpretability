@@ -5,6 +5,7 @@ from .activation_collector import (
     is_cache_valid,
     cleanup_invalid_cache,
     get_cache_status,
+    load_original_num_tokens_from_cache,
 )
 from .token_sampler import TokenSamplerConfig, TokenSampler
 from .sae import MultiModalSAE, create_multimodal_sae, prepare_batch_for_bfloat16
@@ -27,4 +28,5 @@ __all__ = [
     "is_cache_valid",
     "cleanup_invalid_cache",
     "get_cache_status",
+    "load_original_num_tokens_from_cache",
 ]

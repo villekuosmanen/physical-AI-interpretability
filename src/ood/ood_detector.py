@@ -98,8 +98,16 @@ class OODDetector:
                     max_sampled_tokens=self.sae_config.get('max_sampled_tokens', 100),
                     block_size=self.sae_config.get('block_size', 8)
                 )
-                # Use same total_tokens default as SAE training
-                total_tokens = 602  # Default for ACT models
+                # Infer total_tokens from the policy model (same as SAE training)
+                from src.sae.config import SAETrainingConfig
+                temp_config = SAETrainingConfig()
+                total_tokens = temp_config._infer_original_num_tokens(self.policy)
+                if total_tokens is None:
+                    total_tokens = 602  # Fallback default
+                    logging.warning("Could not infer token count from model, using default 602")
+                else:
+                    logging.info(f"Inferred {total_tokens} tokens from policy model for OOD detection")
+                
                 self.token_sampler = TokenSampler(sampler_config, total_tokens=total_tokens)
                 logging.info(f"Initialized token sampler for OOD detection: {sampler_config.sampling_strategy}")
             else:

@@ -90,8 +90,9 @@ class SAETrainer():
             block_size=self.config.block_size
         ) if self.config.use_token_sampling else None
         
-        # Auto-infer model parameters
+        # Auto-infer model parameters - will be updated later if using cached activations
         self.config.infer_model_params(self.policy, token_sampler_config)
+        self._token_sampler_config = token_sampler_config  # Store for potential cache-based inference
 
         # Determine layer name from policy - pick last layer in encoder
         self.layer_name = "model.encoder.layers.3.norm2"  # Default layer
@@ -165,6 +166,10 @@ class SAETrainer():
         if use_existing_cache:
             logging.info(f"Using existing valid activation cache at {cache_path}")
             try:
+                # Update config with parameters from cache metadata
+                logging.info("Updating model parameters from cached activation data...")
+                self.config.infer_model_params_from_cache(str(cache_path), self._token_sampler_config)
+                
                 return create_cached_dataloader(
                     cache_dir=str(cache_path),
                     batch_size=self.config.batch_size,
@@ -216,6 +221,10 @@ class SAETrainer():
             logging.error(f"Cache creation completed but validation failed for {cache_dir_str}")
             cleanup_invalid_cache(cache_dir_str)
             raise RuntimeError("Failed to create valid activation cache")
+        
+        # Update config with actual parameters from the newly created cache
+        logging.info("Updating model parameters from newly created cache data...")
+        self.config.infer_model_params_from_cache(cache_dir_str, self._token_sampler_config)
         
         # Create dataloader from cached activations
         return create_cached_dataloader(
