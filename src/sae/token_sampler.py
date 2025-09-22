@@ -23,7 +23,7 @@ class TokenSampler:
     Handles consistent token sampling strategies
     """
     
-    def __init__(self, config: TokenSamplerConfig, total_tokens: int = 602):
+    def __init__(self, config: TokenSamplerConfig, total_tokens: int):
         self.config = config
         self.total_tokens = total_tokens
         self.sampled_indices = None

@@ -47,11 +47,20 @@ class ActivationCache:
             self,
             config: ActivationCacheConfig,
             sampler_config: TokenSamplerConfig,
+            total_tokens: int = None,
+            policy_model = None,
         ):
         self.config = config
         self.cache_dir = Path(config.cache_dir) / config.experiment_name
         self.cache_dir.mkdir(parents=True, exist_ok=True)
-        self.sampler = TokenSampler(sampler_config)
+        
+        # For now, create sampler with a placeholder value - we'll update it when we see real data
+        if total_tokens is None:
+            total_tokens = 602  # Temporary placeholder, will be updated from actual data
+            logging.info("Using placeholder token count 602, will be updated from actual activation data")
+        
+        self.sampler = TokenSampler(sampler_config, total_tokens)
+        self._sampler_config = sampler_config  # Store config for potential recreation
         
         # Initialize cache state
         self.current_buffer = []
@@ -234,13 +243,28 @@ class ActivationCache:
             activations = activations.detach()
         if activations.device != torch.device('cpu'):
             activations = activations.cpu()
+
+        activations = activations.permute(1, 0, 2).contiguous() # flip batch size and tokens_length dims
         
         # Store activation shape for metadata
         if self.metadata['activation_shape'] is None:
             self.metadata['activation_shape'] = list(activations.shape[1:])  # Exclude batch dimension
         
+        # Record the original number of tokens (before sampling) - this is the key insight!
+        original_num_tokens = activations.shape[1]  # num_tokens from (batch_size, num_tokens, token_dim)
+        if 'original_num_tokens' not in self.metadata:
+            self.metadata['original_num_tokens'] = original_num_tokens
+            logging.info(f"Recorded original_num_tokens from actual data: {original_num_tokens}")
+            
+            # Update the sampler with the correct token count if it was using placeholder
+            if self.sampler.total_tokens != original_num_tokens:
+                logging.info(f"Updating TokenSampler with correct token count: {self.sampler.total_tokens} -> {original_num_tokens}")
+                self.sampler = TokenSampler(self._sampler_config, original_num_tokens)
+                
+        elif self.metadata['original_num_tokens'] != original_num_tokens:
+            logging.warning(f"Token count mismatch! Expected {self.metadata['original_num_tokens']}, got {original_num_tokens}")
+        
         # Add to buffer
-        activations = activations.permute(1, 0, 2).contiguous() # flip batch size and tokens_length dims
         activations = self.sampler.sample_tokens(activations)
         batch_size = activations.shape[0]
         for i in range(batch_size):
@@ -543,7 +567,7 @@ class ActivationCollector:
         ):
         self.act_model = act_model
         self.config = config
-        self.cache = ActivationCache(config, sampler_config)
+        self.cache = ActivationCache(config, sampler_config, policy_model=act_model)
         self.hook = None
         
         # Setup hook
@@ -850,6 +874,38 @@ def create_cached_dataloader(
         pin_memory=True,
         drop_last=True
     )
+
+
+def load_original_num_tokens_from_cache(cache_path: str) -> Optional[int]:
+    """
+    Load the original number of tokens from cached activation metadata.
+    
+    Args:
+        cache_path: Path to the activation cache directory
+        
+    Returns:
+        Original number of tokens if found, None otherwise
+    """
+    cache_path = Path(cache_path)
+    
+    # Look for metadata.json file
+    metadata_file = cache_path / "cache_metadata.json"
+    if metadata_file.exists():
+        try:
+            with open(metadata_file, 'r') as f:
+                metadata = json.load(f)
+            original_num_tokens = metadata.get('original_num_tokens')
+            if original_num_tokens is not None:
+                logging.info(f"Loaded original_num_tokens from cache metadata: {original_num_tokens}")
+                return int(original_num_tokens)
+            else:
+                logging.warning("original_num_tokens not found in cache metadata")
+        except Exception as e:
+            logging.warning(f"Could not load metadata from {metadata_file}: {e}")
+    else:
+        logging.warning(f"Metadata file not found at {metadata_file}")
+    
+    return None
 
 
 def collect_and_cache_activations(

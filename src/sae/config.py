@@ -1,6 +1,7 @@
 from dataclasses import dataclass, field
 from typing import Optional
 import torch
+import logging
 
 
 @dataclass
@@ -9,7 +10,7 @@ class SAETrainingConfig:
     # Model config - these will be auto-inferred
     num_tokens: Optional[int] = None  # Auto-inferred from token sampling config
     token_dim: Optional[int] = None   # Auto-inferred from ACT model
-    expansion_factor: float = 1.25    # Feature expansion factor (feature_dim = num_tokens * token_dim * expansion_factor)
+    expansion_factor: float = 1    # Feature expansion factor (feature_dim = num_tokens * token_dim * expansion_factor)
     activation_fn: str = 'relu'       # 'tanh', 'relu', 'leaky_relu'
     
     # Token sampling config - affects num_tokens calculation
@@ -17,7 +18,7 @@ class SAETrainingConfig:
     fixed_tokens: list = field(default_factory=lambda: [0, 1])  # VAE latent + proprioception tokens
     sampling_strategy: str = "block_average"  # "uniform", "stride", "random_fixed", "block_average"
     sampling_stride: int = 8
-    max_sampled_tokens: int = 100
+    max_sampled_tokens: int = 200
     block_size: int = 8
     
     # Training config
@@ -55,6 +56,99 @@ class SAETrainingConfig:
             return int(self.num_tokens * self.token_dim * self.expansion_factor)
         return None
     
+    def _infer_original_num_tokens(self, policy) -> int:
+        """
+        Infer the original number of tokens from the ACT policy model.
+        
+        The total number of tokens in ACT models is calculated as:
+        - 2 fixed tokens (VAE latent + proprioception)
+        - Plus tokens from each camera image (width/32 × height/32 for each camera)
+        
+        Args:
+            policy: The ACT policy model
+            
+        Returns:
+            Original number of tokens in the model
+        """
+        original_num_tokens = None
+        
+        # Method 1: Try to infer from model configuration
+        if hasattr(policy, 'config'):
+            config = policy.config
+            
+            # Check if config has image features information
+            if hasattr(config, 'image_features') and config.image_features:
+                # Calculate tokens from image dimensions
+                # ACT models typically have 2 fixed tokens (VAE + proprioception)
+                fixed_tokens = 2
+                image_tokens = len(config.image_features)
+                original_num_tokens = fixed_tokens + (image_tokens * 300)
+        
+        # Method 3: Use established default for ACT models if nothing else worked
+        if original_num_tokens is None:
+            # For common ACT setups with 2 cameras at 480x640 resolution
+            original_num_tokens = 602  # 2 + 2*((480/32) * (640/32)) = 2 + 2*(15*20) = 602
+            logging.warning(f"Using default ACT token count: {original_num_tokens} (configure your model for automatic detection)")
+        
+        return original_num_tokens
+
+    def infer_model_params_from_cache(self, cache_path: str, token_sampler_config=None):
+        """
+        Infer model parameters from cached activation data.
+        
+        Args:
+            cache_path: Path to cached activation data
+            token_sampler_config: TokenSamplerConfig object for token sampling.
+        
+        Returns:
+            Self for method chaining
+        """
+        # Load original_num_tokens from cache metadata
+        from .activation_collector import load_original_num_tokens_from_cache
+        original_num_tokens = load_original_num_tokens_from_cache(cache_path)
+        
+        if original_num_tokens is None:
+            raise ValueError(f"Could not load original_num_tokens from cache at {cache_path}")
+        
+        # Infer token_dim from activation shape in cache metadata
+        import json
+        from pathlib import Path
+        metadata_file = Path(cache_path) / "metadata.json"
+        if metadata_file.exists():
+            with open(metadata_file, 'r') as f:
+                metadata = json.load(f)
+            activation_shape = metadata.get('activation_shape')
+            if activation_shape and len(activation_shape) == 2:
+                # activation_shape is [num_tokens, token_dim] after excluding batch dimension
+                self.token_dim = activation_shape[1]
+                logging.info(f"Inferred token_dim from cache metadata: {self.token_dim}")
+        
+        if self.token_dim is None:
+            raise ValueError("Could not infer token_dim from cache metadata")
+        
+        # Calculate num_tokens based on token sampling
+        if token_sampler_config is not None:
+            from src.sae import TokenSampler
+            sampler = TokenSampler(token_sampler_config, total_tokens=original_num_tokens)
+            sampling_info = sampler.get_sampling_info()
+            
+            if sampling_info['use_token_sampling']:
+                self.num_tokens = sampling_info['num_sampled_tokens']
+            else:
+                self.num_tokens = original_num_tokens
+        else:
+            # No token sampling, use the fixed tokens only
+            self.num_tokens = len(self.fixed_tokens)
+        
+        logging.info(f"Inferred model parameters from cache:")
+        logging.info(f"  original_num_tokens: {original_num_tokens}")
+        logging.info(f"  token_dim: {self.token_dim}")
+        logging.info(f"  num_tokens (after sampling): {self.num_tokens}")
+        logging.info(f"  feature_dim: {self.feature_dim}")
+        logging.info(f"  expansion_factor: {self.expansion_factor}")
+        
+        return self
+
     def infer_model_params(self, policy, token_sampler_config=None):
         """
         Infer num_tokens and token_dim from the policy model and token sampling configuration.
@@ -85,13 +179,17 @@ class SAETrainingConfig:
             elif hasattr(policy.config, 'hidden_size'):
                 self.token_dim = policy.config.hidden_size
         
+        # Infer original_num_tokens from the model itself
+        original_num_tokens = self._infer_original_num_tokens(policy)
+                
+        # Final fallback to default
+        if original_num_tokens is None:
+            original_num_tokens = 602
+            logging.warning("Using hardcoded default of 602 tokens. Consider configuring your model properly.")
+        
         # Infer num_tokens based on token sampling
         if token_sampler_config is not None:
             from src.sae import TokenSampler
-            
-            # Create a dummy sampler to get the number of output tokens
-            # We need to know the original number of tokens in the model
-            original_num_tokens = 602  # Default for ACT models - TODO: make this configurable
             
             sampler = TokenSampler(token_sampler_config, total_tokens=original_num_tokens)
             sampling_info = sampler.get_sampling_info()
@@ -110,10 +208,11 @@ class SAETrainingConfig:
         if self.num_tokens is None:
             raise ValueError("Could not infer num_tokens. Please check token sampling configuration.")
             
-        print(f"Auto-inferred model parameters:")
-        print(f"  token_dim: {self.token_dim}")
-        print(f"  num_tokens: {self.num_tokens}")
-        print(f"  feature_dim: {self.feature_dim}")
-        print(f"  expansion_factor: {self.expansion_factor}")
+        logging.info(f"Auto-inferred model parameters:")
+        logging.info(f"  original_num_tokens: {original_num_tokens}")
+        logging.info(f"  token_dim: {self.token_dim}")
+        logging.info(f"  num_tokens (after sampling): {self.num_tokens}")
+        logging.info(f"  feature_dim: {self.feature_dim}")
+        logging.info(f"  expansion_factor: {self.expansion_factor}")
         
         return self

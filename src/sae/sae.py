@@ -197,7 +197,7 @@ class MultiModalSAE(nn.Module):
         }
 
 def create_multimodal_sae(
-    num_tokens: int = 602,
+    num_tokens: int = None,
     token_dim: int = 512,
     feature_dim: int = 1024,
     device: str = 'cuda',
@@ -205,9 +205,22 @@ def create_multimodal_sae(
 ) -> nn.Module:
     """
     Factory function to SAE models with bfloat16 support.
+    
+    Args:
+        num_tokens: Number of tokens in the model. If None, will raise an error.
+        token_dim: Dimension of each token
+        feature_dim: Dimension of the feature space
+        device: Device to place the model on
+        use_bfloat16: Whether to use bfloat16 precision
 
     :meta private:
     """
+    if num_tokens is None:
+        raise ValueError(
+            "num_tokens must be specified. Use SAETrainingConfig.infer_model_params() "
+            "to automatically infer this value from your ACT policy model."
+        )
+    
     return MultiModalSAE(
         num_tokens=num_tokens,
         token_dim=token_dim,
