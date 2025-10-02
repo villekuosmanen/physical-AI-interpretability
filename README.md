@@ -24,13 +24,10 @@ pip install physical-ai-interpretability
 Easiest way to use the attention mapper is to run a post-hoc attention analysis of an existing dataset. In this case, we run our pre-trained policy on episodes in the dataset and capture the attention maps. This requires no connection to any robots and should work out of the box.
 
 ```
-python examples/visualise_original_data_attention.py --dataset-repo-id lerobot/svla_so101_pickplace --episode-id 29 --policy-path <path to your pre-trained policy> --output-dir ./output/attention_analysis_results
+python -m examples.visualise_original_data_attention --dataset-repo-id lerobot/svla_so101_pickplace --episode-id 29 --policy-path <path to your pre-trained policy> --output-dir ./output/attention_analysis_results
 ```
 
 Pre-trained policy part may look something like this: `../lerobot/outputs/train/act_johns_arm/checkpoints/last/pretrained_model`
-
-If you get an error with `ModuleNotFoundError: No module named 'src'`, set the `PYTHONPATH` environment variable to the location of `physical-ai-interpretability` in your local directory, e.g.  
-`PYTHONPATH=/home/ville/physical-ai-interpretability:$PYTHONPATH`.
 
 ### Use at test-time
 
