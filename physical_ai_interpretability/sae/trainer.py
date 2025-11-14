@@ -18,8 +18,7 @@ from lerobot.configs.policies import PreTrainedConfig
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from robocandywrapper import make_dataset_without_config
 
-from utils import get_repo_hash
-from utils.naming import get_experiment_name, get_cache_name
+from physical_ai_interpretability.utils import get_repo_hash, get_experiment_name, get_cache_name
 from .config import SAETrainingConfig
 from .token_sampler import TokenSamplerConfig
 from .activation_collector import (
