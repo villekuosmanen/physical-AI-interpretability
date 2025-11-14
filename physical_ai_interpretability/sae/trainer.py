@@ -2,7 +2,6 @@ import json
 import logging
 from pathlib import Path
 from typing import Optional, Dict
-from tempfile import TemporaryDirectory
 
 import numpy as np
 import torch
@@ -17,9 +16,10 @@ from huggingface_hub import HfApi, hf_hub_download
 from lerobot.policies.factory import make_policy
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
+from robocandywrapper import make_dataset_without_config
 
-from src.utils import make_dataset_without_config, get_repo_hash
-from src.utils.naming import get_experiment_name, get_cache_name
+from utils import get_repo_hash
+from utils.naming import get_experiment_name, get_cache_name
 from .config import SAETrainingConfig
 from .token_sampler import TokenSamplerConfig
 from .activation_collector import (
@@ -436,12 +436,22 @@ class SAETrainer():
         # Generate YAML frontmatter
         yaml_tags = '\n'.join([f'- {tag}' for tag in self.hub_tags])
         
+        # Format datasets properly for YAML frontmatter
+        if self.repo_id.startswith('[') and self.repo_id.endswith(']'):
+            # Handle multiple datasets: "[dataset1, dataset2]" -> ["dataset1", "dataset2"]
+            datasets_str = self.repo_id.strip('[]')
+            datasets = [ds.strip() for ds in datasets_str.split(',')]
+            yaml_datasets = '\n'.join([f'- {ds}' for ds in datasets])
+        else:
+            # Handle single dataset
+            yaml_datasets = f'- {self.repo_id}'
+        
         card_content = f"""---
 license: {self.hub_license}
 tags:
 {yaml_tags}
 datasets:
-- {self.repo_id}
+{yaml_datasets}
 library_name: physical-ai-interpretability
 ---
 
@@ -471,13 +481,13 @@ This model is a Sparse Autoencoder trained for interpretability analysis of robo
 ## Usage
 
 ```python
-from src.sae.trainer import load_sae_from_hub
+from physical_ai_interpretability.sae import load_sae_from_hub
 
 # Load model from Hub
 model = load_sae_from_hub("{self.hub_repo_id}")
 
 # Or load using builder
-from src.sae.builder import SAEBuilder
+from physical_ai_interpretability.sae import SAEBuilder
 builder = SAEBuilder(device='cuda')
 model = builder.load_from_hub("{self.hub_repo_id}")
 ```
@@ -487,7 +497,7 @@ model = builder.load_from_hub("{self.hub_repo_id}")
 This SAE model can be used for OOD detection with LeRobot policies:
 
 ```python
-from src.ood import OODDetector
+from physical_ai_interpretability.ood import OODDetector
 
 # Create OOD detector with Hub-loaded SAE
 ood_detector = OODDetector(
@@ -506,18 +516,6 @@ is_ood, error = ood_detector.is_out_of_distribution(observation)
 - `config.json`: Training and model configuration
 - `training_state.pt`: Complete training state (optimizer, scheduler, metrics)
 - `ood_params.json`: OOD detection parameters (if fitted)
-
-## Citation
-
-If you use this model in your research, please cite:
-
-```bibtex
-@misc{{sae_model,
-  title={{Sparse Autoencoder for {self.repo_id.split('/')[-1].replace('_', ' ').title()}}},
-  author={{Your Name}},
-  year={{2024}},
-  url={{https://huggingface.co/{self.hub_repo_id}}}
-}}
 ```
 
 ## Framework
@@ -774,7 +772,7 @@ def load_sae_from_hub(
     Returns:
         Loaded SAE model
     """
-    from src.sae import create_multimodal_sae
+    from physical_ai_interpretability.sae import create_multimodal_sae
     
     # Download model file
     model_file = hf_hub_download(
@@ -839,7 +837,7 @@ def load_sae_model(model_path: str, config_path: str = None, device: str = 'cuda
     Returns:
         Loaded SAE model
     """
-    from src.sae import create_multimodal_sae
+    from physical_ai_interpretability.sae import create_multimodal_sae
     
     model_path = Path(model_path)
     

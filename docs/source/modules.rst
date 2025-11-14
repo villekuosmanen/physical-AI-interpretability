@@ -1,7 +1,6 @@
-physical-AI-attention-mapper
+physical-AI-interpretability
 ============================
 
 .. toctree::
    :maxdepth: 4
 
-   src

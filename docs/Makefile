@@ -32,7 +32,7 @@ clean:
 
 # Regenerate API docs and build
 api-rebuild:
-	sphinx-apidoc --force -a -o source .. ../src/utils/naming.py
+	sphinx-apidoc --force -a -o source .. ../physical_ai_interpretability
 	@$(SPHINXBUILD) -M html "$(SOURCEDIR)" "$(BUILDDIR)" $(SPHINXOPTS) $(O)
 	@touch "$(BUILDDIR)/html/.nojekyll"
 

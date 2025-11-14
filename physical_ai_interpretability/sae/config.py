@@ -128,7 +128,7 @@ class SAETrainingConfig:
         
         # Calculate num_tokens based on token sampling
         if token_sampler_config is not None:
-            from src.sae import TokenSampler
+            from physical_ai_interpretability.sae import TokenSampler
             sampler = TokenSampler(token_sampler_config, total_tokens=original_num_tokens)
             sampling_info = sampler.get_sampling_info()
             
@@ -189,7 +189,7 @@ class SAETrainingConfig:
         
         # Infer num_tokens based on token sampling
         if token_sampler_config is not None:
-            from src.sae import TokenSampler
+            from physical_ai_interpretability.sae import TokenSampler
             
             sampler = TokenSampler(token_sampler_config, total_tokens=original_num_tokens)
             sampling_info = sampler.get_sampling_info()
