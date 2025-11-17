@@ -2,7 +2,7 @@ import argparse
 import logging
 from pathlib import Path
 
-from src.sae import SAETrainer, SAETrainingConfig
+from physical_ai_interpretability.sae import SAETrainer, SAETrainingConfig
 
 
 def main():
@@ -97,7 +97,7 @@ def main():
     if args.upload_to_hub:
         logging.info(f"Model uploaded to Hub: {args.hub_repo_id}")
         logging.info("You can now use this model by loading from Hub:")
-        logging.info(f"  from src.sae.trainer import load_sae_from_hub")
+        logging.info(f"  from physical_ai_interpretability.sae import load_sae_from_hub")
         logging.info(f"  model = load_sae_from_hub('{args.hub_repo_id}')")
     else:
         logging.info("Local training completed. Use --upload-to-hub to share your model!")

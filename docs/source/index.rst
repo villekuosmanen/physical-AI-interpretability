@@ -15,4 +15,4 @@ documentation for details.
    :maxdepth: 4
    :caption: Contents:
 
-   src
+   physical_ai_interpretability

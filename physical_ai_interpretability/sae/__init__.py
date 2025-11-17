@@ -9,7 +9,7 @@ from .activation_collector import (
 )
 from .token_sampler import TokenSamplerConfig, TokenSampler
 from .sae import MultiModalSAE, create_multimodal_sae, prepare_batch_for_bfloat16
-from .trainer import SAETrainer, load_sae_model
+from .trainer import SAETrainer, create_cached_dataloader, load_sae_model
 from .builder import SAEBuilder, load_sae_model_simple
 
 __all__ = [
