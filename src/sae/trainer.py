@@ -18,7 +18,8 @@ from lerobot.policies.factory import make_policy
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
-from src.utils import make_dataset_without_config, get_repo_hash
+from robocandywrapper import make_dataset_without_config
+from src.utils import get_repo_hash
 from src.utils.naming import get_experiment_name, get_cache_name
 from .config import SAETrainingConfig
 from .token_sampler import TokenSamplerConfig

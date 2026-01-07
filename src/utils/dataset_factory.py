@@ -4,7 +4,7 @@ import torch
 import logging
 from pprint import pformat
 
-from lerobot.constants import HF_LEROBOT_HOME
+from lerobot.utils.constants import HF_LEROBOT_HOME
 from lerobot.datasets.lerobot_dataset import (
     LeRobotDatasetMetadata,
     LeRobotDataset,
