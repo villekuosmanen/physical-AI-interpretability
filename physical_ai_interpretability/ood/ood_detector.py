@@ -12,9 +12,9 @@ from huggingface_hub import hf_hub_download, HfApi
 
 from lerobot.policies.act.modeling_act import ACTPolicy
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
-from src.sae.sae import MultiModalSAE
-from src.sae.builder import SAEBuilder
-from src.sae.token_sampler import TokenSampler, TokenSamplerConfig
+from physical_ai_interpretability.sae.sae import MultiModalSAE
+from physical_ai_interpretability.sae.builder import SAEBuilder
+from physical_ai_interpretability.sae.token_sampler import TokenSampler, TokenSamplerConfig
 
 
 class OODDetector:
@@ -99,7 +99,7 @@ class OODDetector:
                     block_size=self.sae_config.get('block_size', 8)
                 )
                 # Infer total_tokens from the policy model (same as SAE training)
-                from src.sae.config import SAETrainingConfig
+                from physical_ai_interpretability.sae.config import SAETrainingConfig
                 temp_config = SAETrainingConfig()
                 total_tokens = temp_config._infer_original_num_tokens(self.policy)
                 if total_tokens is None:

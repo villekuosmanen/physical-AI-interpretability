@@ -19,7 +19,7 @@ from lerobot.common.policies.factory import make_policy
 from lerobot.common.datasets.utils import dataloader_collate_fn
 from lerobot.configs.policies import PreTrainedConfig
 
-from src.sae import MultiModalSAE, TokenSamplerConfig, TokenSampler
+from physical_ai_interpretability.sae import MultiModalSAE, TokenSamplerConfig, TokenSampler
 
 
 @dataclass
@@ -90,7 +90,7 @@ class StreamingFeatureAnalyzer:
         
         # Infer total_tokens if not provided
         if total_tokens is None and policy_model is not None:
-            from src.sae.config import SAETrainingConfig
+            from physical_ai_interpretability.sae.config import SAETrainingConfig
             temp_config = SAETrainingConfig()
             total_tokens = temp_config._infer_original_num_tokens(policy_model)
             if total_tokens is None:

@@ -29,12 +29,12 @@ python examples/visualise_original_data_attention.py --dataset-repo-id lerobot/s
 
 Pre-trained policy part may look something like this: `../lerobot/outputs/train/act_johns_arm/checkpoints/last/pretrained_model`
 
-If you get an error with `ModuleNotFoundError: No module named 'src'`, set the `PYTHONPATH` environment variable to the location of `physical-ai-interpretability` in your local directory, e.g.  
+If you get an error with `ModuleNotFoundError: No module named 'physical_ai_interpretability'`, set the `PYTHONPATH` environment variable to the location of `physical-ai-interpretability` in your local directory, e.g.  
 `PYTHONPATH=/home/ville/physical-ai-interpretability:$PYTHONPATH`.
 
 ### Use at test-time
 
-Use the `ACTPolicyWithAttention` plugin in your project either by importing it from here or just copying the `src/attention_maps/act_attention_mapper.py` file over.
+Use the `ACTPolicyWithAttention` plugin in your project either by importing it from here or just copying the `physical_ai_interpretability/attention_maps/act_attention_mapper.py` file over.
 
 See `examples/usage_with_act.py` for use of the attention mapper with the default LeRobot ACT policy.
 

@@ -19,8 +19,8 @@ from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.policies.factory import make_policy
 from lerobot.configs.policies import PreTrainedConfig
 
-from src.ood import OODDetector, create_default_ood_params_path
-from src.utils import make_dataset_without_config
+from physical_ai_interpretability.ood import OODDetector, create_default_ood_params_path
+from physical_ai_interpretability.utils import make_dataset_without_config
 
 
 def main():
