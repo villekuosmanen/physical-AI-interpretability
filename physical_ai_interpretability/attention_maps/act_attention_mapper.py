@@ -8,7 +8,7 @@ class ACTPolicyWithAttention:
     Wrapper for ACTPolicy that provides transformer attention visualizations.
     """
     
-    def __init__(self, policy, image_shapes=None, specific_decoder_token_index: Optional[int] = None):
+    def __init__(self, policy, preprocessor, image_shapes=None, specific_decoder_token_index: Optional[int] = None):
         """
         Initialize the wrapper with an ACTPolicy.
         
@@ -18,6 +18,7 @@ class ACTPolicyWithAttention:
             specific_decoder_token_index: experimental, allows visualising attention maps for a particular token rather than averaging all outputs.
         """
         self.policy = policy
+        self.preprocessor = preprocessor
         self.config = policy.config
         
         self.specific_decoder_token_index = specific_decoder_token_index
@@ -92,8 +93,12 @@ class ACTPolicyWithAttention:
         handle = self.target_layer.register_forward_hook(attention_hook)
         
         # Call the original policy's select_action
+        observation['observation.state'] = observation['observation.state.pos']
+        observation = self.preprocessor(observation)
         with torch.inference_mode():
             action = self.policy.select_action(observation)
+            if isinstance(action, tuple):
+                action, _ = action
             self.policy.reset()
         
         # Remove the hook
@@ -139,9 +144,9 @@ class ACTPolicyWithAttention:
                 else:
                     img_tensor_batched = img_tensor
 
-                img_tensor_batched = img_tensor_batched.to(next(self.policy.model.backbone.parameters()).device)
+                img_tensor_batched = img_tensor_batched.to(next(self.policy.model.vision_encoder.resnet_feature_extractor.parameters()).device)
 
-                feature_map_dict = self.policy.model.backbone(img_tensor_batched) # Use batched tensor
+                feature_map_dict = self.policy.model.vision_encoder.resnet_feature_extractor(img_tensor_batched) # Use batched tensor
                 feature_map = feature_map_dict["feature_map"]
                 h, w = feature_map.shape[2], feature_map.shape[3]
                 spatial_shapes.append((h, w))

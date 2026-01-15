@@ -22,7 +22,7 @@ def main():
     parser.add_argument("--force-cache-refresh", action="store_true", help="Force refresh of activation cache")
     parser.add_argument("--expansion-factor", type=float, default=1.25, help="Feature expansion factor for SAE")
     parser.add_argument("--learning-rate", type=float, default=1e-4, help="Learning rate for training")
-    parser.add_argument("--num-epochs", type=int, default=20, help="Number of training epochs")
+    parser.add_argument("--num-epochs", type=int, default=10, help="Number of training epochs")
     parser.add_argument("--l1-penalty", type=float, default=0.3, help="L1 penalty for sparsity")
     
     # Hugging Face Hub arguments

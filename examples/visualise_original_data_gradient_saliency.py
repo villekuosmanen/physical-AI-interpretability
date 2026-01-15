@@ -1,16 +1,16 @@
 #!/usr/bin/env python
 
 """
-Script to analyze policy behavior on dataset episodes.
-Runs policy inference on episodes and analyzes proprioceptive feature importance.
-By default, analyzes all episodes in the dataset.
+Script to analyze policy behavior using gradient-based saliency maps.
+Runs policy inference on episodes and visualizes which pixels and proprioceptive
+features influence the policy's predictions using Integrated Gradients.
 """
 
 import argparse
 import os
 import time
 import subprocess
-from typing import Dict, Tuple
+from typing import Dict, Tuple, Optional
 
 import numpy as np
 import torch
@@ -21,9 +21,8 @@ from lerobot.policies.factory import make_policy, make_pre_post_processors
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.utils.import_utils import register_third_party_plugins
 from robocandywrapper.factory import make_dataset_without_config
-# from robocandywrapper.dataformats.lerobot_21 import LeRobot21Dataset as LeRobotDataset
 
-from physical_ai_interpretability.attention_maps import ACTPolicyWithAttention
+from physical_ai_interpretability.attention_maps import ACTPolicyWithGradients
 
 
 TRAIN_DATASET_REPO_IDS = [
@@ -90,7 +89,9 @@ def encode_video_ffmpeg(frames, output_filename, fps, pix_fmt_in="bgr24"):
     except Exception as e:
         print(f"An unexpected error occurred during video encoding for {output_filename}: {e}")
 
-def load_policy(policy_path: str, dataset_meta, policy_overrides: list = None) -> Tuple[torch.nn.Module, dict]:
+def load_policy(policy_path: str, dataset_meta, policy_overrides: list = None,
+                n_integration_steps: int = 50, normalization_mode: str = 'percentile',
+                normalization_percentile: float = 95.0) -> Tuple[torch.nn.Module, dict]:
     """Load and initialize a policy from checkpoint."""
     
     # Load regular LeRobot policy
@@ -107,7 +108,8 @@ def load_policy(policy_path: str, dataset_meta, policy_overrides: list = None) -
 
     # NOTE: policy has to be an ACT policy for this to work
     policy = make_policy(policy_cfg, ds_meta=dataset_meta)
-        # Create processors - only provide dataset_stats if not resuming from saved processors
+    
+    # Create processors
     processor_kwargs = {}
     postprocessor_kwargs = {}
 
@@ -134,8 +136,15 @@ def load_policy(policy_path: str, dataset_meta, policy_overrides: list = None) -
         **processor_kwargs,
         **postprocessor_kwargs,
     )
-        
-    policy = ACTPolicyWithAttention(policy, preprocessor)
+    
+    # Wrap policy with gradient visualizer
+    policy = ACTPolicyWithGradients(
+        policy, 
+        preprocessor,
+        n_integration_steps=n_integration_steps,
+        normalization_mode=normalization_mode,
+        normalization_percentile=normalization_percentile
+    )
     return policy, policy_cfg
 
 def prepare_observation_for_policy(frame: dict, 
@@ -209,9 +218,23 @@ def analyze_episode(dataset: LeRobotDataset,
                    episode_id: int,
                    device: torch.device,
                    output_dir: str,
+                   aggregation: str = 'sum',
+                   timestep_idx: Optional[int] = None,
+                   action_dim_idx: Optional[int] = None,
                    model_dtype: torch.dtype = torch.float32) -> Dict:
     """
-    Run policy inference on an episode and analyze proprioceptive importance.
+    Run policy inference on an episode and analyze gradient-based importance.
+    
+    Args:
+        dataset: LeRobot dataset
+        policy: Policy wrapped with ACTPolicyWithGradients
+        episode_id: Episode ID to analyze
+        device: Device for computation
+        output_dir: Directory to save results
+        aggregation: How to aggregate trajectory for gradients ('sum', 'norm', 'timestep', 'action_dim')
+        timestep_idx: Which timestep to analyze (if aggregation='timestep')
+        action_dim_idx: Which action dimension to analyze (if aggregation='action_dim')
+        model_dtype: Model data type
     
     Returns:
         Dictionary containing analysis results
@@ -225,13 +248,19 @@ def analyze_episode(dataset: LeRobotDataset,
         raise ValueError(f"Episode {episode_id} not found or is empty")
     
     print(f"Analyzing episode {episode_id} with {episode_length} frames")
+    print(f"Gradient aggregation method: {aggregation}")
+    if timestep_idx is not None:
+        print(f"  Timestep index: {timestep_idx}")
+    if action_dim_idx is not None:
+        print(f"  Action dimension index: {action_dim_idx}")
     
     # Initialize storage for results
-    attention_videos = None
+    saliency_videos = None
     side_by_side_buffer = []
     actions_predicted = []
     actions_ground_truth = []
     timestamps = []
+    proprio_saliencies = []
     
     # Debug policy configuration
     if hasattr(policy, 'config'):
@@ -262,55 +291,52 @@ def analyze_episode(dataset: LeRobotDataset,
     
     # Process each frame
     for i in tqdm(range(episode_length), desc="Processing frames"):
+        # if i < 100:
+        #     continue
+        # if i > 150:
+        #     break
         frame = dataset[episode_frames[i]['index'].item()]
         timestamps.append(frame['timestamp'].item())
-                
+        
         # Prepare observation for policy (with debug on first frame)
         observation = prepare_observation_for_policy(frame, device, model_dtype, debug=(i==0))
-                
-        # Run policy inference
-        with torch.inference_mode():
-            if hasattr(policy, 'select_action'):
-                result = policy.select_action(observation)
-                
-                if isinstance(result, tuple):
-                    # ACT policy with attention
-                    action, attention_maps = result
-                    
-                    # Generate attention visualizations
-                    visualizations = policy.visualize_attention(
-                        attention_maps=attention_maps, 
-                        observation=observation,
-                    )
-                    
-                    # Initialize video buffers on first frame
-                    if attention_videos is None and visualizations:
-                        num_cameras = len(visualizations)
-                        attention_videos = [[] for _ in range(num_cameras)]
-                        print(f"Detected {num_cameras} camera views for attention visualization")
-                    
-                    # Store attention frames
-                    if attention_videos is not None:
-                        valid_frames_this_step = []
-                        for j, vis in enumerate(visualizations):
-                            if vis is not None and j < len(attention_videos):
-                                attention_videos[j].append(vis.copy())
-                                valid_frames_this_step.append(vis.copy())
-                            else:
-                                valid_frames_this_step.append(None)
-                        
-                        # Create side-by-side frame
-                        if len(valid_frames_this_step) == num_cameras and all(f is not None for f in valid_frames_this_step):
-                            first_height = valid_frames_this_step[0].shape[0]
-                            if all(f.shape[0] == first_height for f in valid_frames_this_step):
-                                side_by_side_frame = np.hstack(valid_frames_this_step)
-                                side_by_side_buffer.append(side_by_side_frame)
+        
+        # Run policy inference with gradient computation
+        action, saliency_maps, proprio_saliency = policy.select_action(
+            observation,
+            aggregation=aggregation,
+            timestep_idx=timestep_idx,
+            action_dim_idx=action_dim_idx
+        )
+        
+        # Generate saliency visualizations
+        visualizations = policy.visualize_saliency(
+            saliency_maps=saliency_maps,
+            observation=observation,
+        )
+        
+        # Initialize video buffers on first frame
+        if saliency_videos is None and visualizations:
+            num_cameras = len(visualizations)
+            saliency_videos = [[] for _ in range(num_cameras)]
+            print(f"Detected {num_cameras} camera views for saliency visualization")
+        
+        # Store saliency frames
+        if saliency_videos is not None:
+            valid_frames_this_step = []
+            for j, vis in enumerate(visualizations):
+                if vis is not None and j < len(saliency_videos):
+                    saliency_videos[j].append(vis.copy())
+                    valid_frames_this_step.append(vis.copy())
                 else:
-                    action = result
-                    
-            else:
-                # Fallback for other policy types
-                action = policy(observation)
+                    valid_frames_this_step.append(None)
+            
+            # Create side-by-side frame
+            if len(valid_frames_this_step) == num_cameras and all(f is not None for f in valid_frames_this_step):
+                first_height = valid_frames_this_step[0].shape[0]
+                if all(f.shape[0] == first_height for f in valid_frames_this_step):
+                    side_by_side_frame = np.hstack(valid_frames_this_step)
+                    side_by_side_buffer.append(side_by_side_frame)
         
         # Store predicted action
         actions_predicted.append(action.squeeze(0).cpu().numpy())
@@ -318,21 +344,24 @@ def analyze_episode(dataset: LeRobotDataset,
         # Store ground truth action
         if 'action' in frame:
             actions_ground_truth.append(frame['action'].numpy())
+        
+        # Store proprioception saliency
+        proprio_saliencies.append(proprio_saliency)
     
     # Generate output files
     os.makedirs(output_dir, exist_ok=True)
     timestamp_str = time.strftime("%Y%m%d-%H%M%S")
     
-    # Save attention videos
-    if attention_videos:
-        for i, cam_buffer in enumerate(attention_videos):
+    # Save saliency videos
+    if saliency_videos:
+        for i, cam_buffer in enumerate(saliency_videos):
             if cam_buffer:
-                output_filename = f"{output_dir}/attention_ep{episode_id}_cam{i}_{timestamp_str}.mp4"
+                output_filename = f"{output_dir}/gradient_saliency_ep{episode_id}_cam{i}_{aggregation}_{timestamp_str}.mp4"
                 encode_video_ffmpeg(cam_buffer, output_filename, dataset.fps)
         
-        # if side_by_side_buffer:
-        output_filename_sbs = f"{output_dir}/attention_ep{episode_id}_combined_{timestamp_str}.mp4"
-        encode_video_ffmpeg(side_by_side_buffer, output_filename_sbs, dataset.fps)
+        if side_by_side_buffer:
+            output_filename_sbs = f"{output_dir}/gradient_saliency_ep{episode_id}_combined_{aggregation}_{timestamp_str}.mp4"
+            encode_video_ffmpeg(side_by_side_buffer, output_filename_sbs, dataset.fps)
     
     # Analyze and save importance results
     analysis_results = {
@@ -341,19 +370,28 @@ def analyze_episode(dataset: LeRobotDataset,
         'timestamps': timestamps,
         'actions_predicted': actions_predicted,
         'actions_ground_truth': actions_ground_truth,
+        'proprio_saliencies': proprio_saliencies,
+        'aggregation_method': aggregation,
     }
-        
+    
+    # Print summary statistics
+    print(f"\nProprioception saliency statistics:")
+    print(f"  Mean: {np.mean(proprio_saliencies):.4f}")
+    print(f"  Std:  {np.std(proprio_saliencies):.4f}")
+    print(f"  Min:  {np.min(proprio_saliencies):.4f}")
+    print(f"  Max:  {np.max(proprio_saliencies):.4f}")
+    
     return analysis_results
 
 def main():
-    parser = argparse.ArgumentParser(description="Analyze policy behavior on dataset episodes")
+    parser = argparse.ArgumentParser(description="Analyze policy behavior using gradient-based saliency maps")
     parser.add_argument("--dataset-repo-id", type=str, required=True,
                         help="Repository ID of the dataset to analyze")
     parser.add_argument("--episode-id", type=int, default=None,
                         help="Episode ID to analyze (if not specified, analyzes all episodes)")
     parser.add_argument("--policy-path", type=str, required=True,
                         help="Path to the policy checkpoint")
-    parser.add_argument("--output-dir", type=str, default="./output/analysis_output",
+    parser.add_argument("--output-dir", type=str, default="./output/gradient_analysis_output",
                         help="Directory to save analysis results")
     parser.add_argument("--policy-overrides", type=str, nargs="*",
                         help="Policy config overrides in key=value format")
@@ -362,8 +400,28 @@ def main():
     parser.add_argument("--model-dtype", type=str, default="float32",
                         choices=["float32", "float16", "bfloat16"],
                         help="Model data type")
+    parser.add_argument("--aggregation", type=str, default="sum",
+                        choices=["sum", "norm", "timestep", "action_dim"],
+                        help="How to aggregate trajectory predictions for gradient computation")
+    parser.add_argument("--timestep-idx", type=int, default=None,
+                        help="Which timestep to analyze (required if aggregation='timestep')")
+    parser.add_argument("--action-dim-idx", type=int, default=None,
+                        help="Which action dimension to analyze (required if aggregation='action_dim')")
+    parser.add_argument("--n-integration-steps", type=int, default=20,
+                        help="Number of steps for Integrated Gradients interpolation")
+    parser.add_argument("--normalization-mode", type=str, default="percentile",
+                        choices=["linear", "percentile"],
+                        help="Normalization mode: 'linear' for min-max, 'percentile' for percentile clipping (default: percentile)")
+    parser.add_argument("--normalization-percentile", type=float, default=99.99,
+                        help="Percentile to clip at when using percentile normalization (default: 95.0)")
     
     args = parser.parse_args()
+    
+    # Validate aggregation arguments
+    if args.aggregation == 'timestep' and args.timestep_idx is None:
+        parser.error("--timestep-idx required when aggregation='timestep'")
+    if args.aggregation == 'action_dim' and args.action_dim_idx is None:
+        parser.error("--action-dim-idx required when aggregation='action_dim'")
     
     # Set up device and dtype
     device = torch.device(args.device)
@@ -377,6 +435,10 @@ def main():
     print(f"Loading dataset: {args.dataset_repo_id}")
     print(f"Policy path: {args.policy_path}")
     print(f"Using device: {device}")
+    print(f"Integration steps: {args.n_integration_steps}")
+    print(f"Normalization mode: {args.normalization_mode}")
+    if args.normalization_mode == 'percentile':
+        print(f"Normalization percentile: {args.normalization_percentile}")
     
     # Load dataset
     try:
@@ -406,7 +468,10 @@ def main():
         policy, policy_cfg = load_policy(
             args.policy_path,
             train_dataset.meta,
-            args.policy_overrides
+            args.policy_overrides,
+            n_integration_steps=args.n_integration_steps,
+            normalization_mode=args.normalization_mode,
+            normalization_percentile=args.normalization_percentile
         )
         
         if hasattr(policy, 'model'):
@@ -419,6 +484,8 @@ def main():
         
     except Exception as e:
         print(f"Error loading policy: {e}")
+        import traceback
+        traceback.print_exc()
         return
     
     # Run analysis on all specified episodes
@@ -427,13 +494,16 @@ def main():
     
     for episode_id in tqdm(episodes_to_analyze, desc="Analyzing episodes"):
         try:
-            print(f"\nStarting analysis of episode {episode_id}...")
+            print(f"\nStarting gradient-based analysis of episode {episode_id}...")
             results = analyze_episode(
                 dataset=dataset,
                 policy=policy,
                 episode_id=episode_id,
                 device=device,
                 output_dir=args.output_dir,
+                aggregation=args.aggregation,
+                timestep_idx=args.timestep_idx,
+                action_dim_idx=args.action_dim_idx,
                 model_dtype=model_dtype
             )
             all_results.append(results)
@@ -448,13 +518,14 @@ def main():
     
     # Summary
     print(f"\n{'='*60}")
-    print(f"ANALYSIS SUMMARY")
+    print(f"GRADIENT-BASED SALIENCY ANALYSIS SUMMARY")
     print(f"{'='*60}")
     print(f"Successfully analyzed: {len(all_results)} episodes")
     if failed_episodes:
         print(f"Failed episodes: {len(failed_episodes)} ({failed_episodes})")
     else:
         print("No failed episodes")
+    print(f"Aggregation method: {args.aggregation}")
     print(f"Results saved to: {args.output_dir}")
     print(f"{'='*60}")
 

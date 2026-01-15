@@ -14,7 +14,7 @@ import wandb
 from safetensors.torch import save_file, load_file
 from huggingface_hub import HfApi, hf_hub_download
 
-from lerobot.policies.factory import make_policy
+from lerobot.policies.factory import make_policy, make_pre_post_processors
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
@@ -80,6 +80,11 @@ class SAETrainer():
         dataset = make_dataset_without_config(
             repo_id=repo_id,
             action_delta_indices=list(range(policy_cfg.chunk_size)),
+            key_rename_map={
+                # "action.pos_is_pad": "action_is_pad",
+                "action.pos": "action",
+                "observation.state.pos": "observation.state",
+            }
         )
         
         # Create dataloader
@@ -94,6 +99,36 @@ class SAETrainer():
 
         ds_meta = dataset.meta if isinstance(dataset, LeRobotDataset) else dataset._datasets[0].meta
         self.policy = make_policy(policy_cfg, ds_meta=ds_meta)
+        
+        # Create processors - only provide dataset_stats if not resuming from saved processors
+        processor_kwargs = {}
+        postprocessor_kwargs = {}
+
+        device = torch.device('cuda')
+        processor_kwargs["preprocessor_overrides"] = {
+            "device_processor": {"device": device.type},
+            "normalizer_processor": {
+                "stats": dataset.meta.stats,
+                "features": {**self.policy.config.input_features, **self.policy.config.output_features},
+                "norm_map": self.policy.config.normalization_mapping,
+            },
+        }
+        postprocessor_kwargs["postprocessor_overrides"] = {
+            "unnormalizer_processor": {
+                "stats": dataset.meta.stats,
+                "features": self.policy.config.output_features,
+                "norm_map": self.policy.config.normalization_mapping,
+            },
+        }
+        preprocessor, postprocessor = make_pre_post_processors(
+            policy_cfg=self.policy.config,
+            pretrained_path=self.policy.config.pretrained_path,
+            dataset_stats=dataset.meta.stats,
+            **processor_kwargs,
+            **postprocessor_kwargs,
+        )
+        self.preprocessor = preprocessor
+        self.postprocessor = postprocessor
 
         # Use provided config or create default
         self.config = sae_config if sae_config is not None else SAETrainingConfig()
@@ -213,6 +248,8 @@ class SAETrainer():
         try:
             cache_dir_str = collect_and_cache_activations(
                 act_model=self.policy,
+                preprocessor=self.preprocessor,
+                postprocessor=self.postprocessor,
                 dataloader=self.dataloader,
                 layer_name=self.layer_name,
                 cache_dir=str(cache_path.parent),

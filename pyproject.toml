@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "physical-ai-interpretability"
-version = "0.1.1"
+version = "0.1.2"
 description = "Tools for interpretability analysis of physical AI models, including sparse autoencoders and attention mapping"
 readme = "README.md"
 license = {file = "LICENSE"}
