@@ -1,1 +1,2 @@
 from .act_attention_mapper import ACTPolicyWithAttention
+from .act_gradient_saliency_mapper import ACTPolicyWithGradients

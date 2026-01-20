@@ -597,7 +597,8 @@ class ActivationCollector:
         logging.info(f"Registered hook on layer: {self.config.layer_name}")
     
     def collect_activations(
-        self, 
+        self,
+        preprocessor,
         dataloader: torch.utils.data.DataLoader, 
         max_samples: Optional[int] = None,
         device: str = 'cuda'
@@ -653,7 +654,8 @@ class ActivationCollector:
                     
                     # Forward pass (triggers hook and caching)
                     self.cache.update_batch_idx(batch_idx)
-                    _ = self.act_model.select_action(batch)
+                    obs = preprocessor(batch)
+                    _ = self.act_model.select_action(obs)
                     self.act_model.reset()
                     samples_collected = self.cache.total_samples
                     processed_batches += 1
@@ -910,6 +912,8 @@ def load_original_num_tokens_from_cache(cache_path: str) -> Optional[int]:
 
 def collect_and_cache_activations(
     act_model,
+    preprocessor,
+    postprocessor,
     dataloader: torch.utils.data.DataLoader,
     layer_name: str,
     cache_dir: str,
@@ -974,7 +978,7 @@ def collect_and_cache_activations(
     collector = ActivationCollector(act_model, config, sampler_config=sampler_config)
     
     try:
-        cache_path = collector.collect_activations(dataloader, max_samples, device)
+        cache_path = collector.collect_activations(preprocessor, dataloader, max_samples, device)
         return cache_path
     finally:
         collector.remove_hook()
