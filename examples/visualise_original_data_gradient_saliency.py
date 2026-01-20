@@ -90,7 +90,8 @@ def encode_video_ffmpeg(frames, output_filename, fps, pix_fmt_in="bgr24"):
         print(f"An unexpected error occurred during video encoding for {output_filename}: {e}")
 
 def load_policy(policy_path: str, dataset_meta, policy_overrides: list = None,
-                n_integration_steps: int = 50, normalization_mode: str = 'percentile',
+                n_integration_steps: int = 50, ig_batch_size: int = 10,
+                normalization_mode: str = 'percentile',
                 normalization_percentile: float = 95.0) -> Tuple[torch.nn.Module, dict]:
     """Load and initialize a policy from checkpoint."""
     
@@ -142,6 +143,7 @@ def load_policy(policy_path: str, dataset_meta, policy_overrides: list = None,
         policy, 
         preprocessor,
         n_integration_steps=n_integration_steps,
+        ig_batch_size=ig_batch_size,
         normalization_mode=normalization_mode,
         normalization_percentile=normalization_percentile
     )
@@ -409,6 +411,8 @@ def main():
                         help="Which action dimension to analyze (required if aggregation='action_dim')")
     parser.add_argument("--n-integration-steps", type=int, default=20,
                         help="Number of steps for Integrated Gradients interpolation")
+    parser.add_argument("--ig-batch-size", type=int, default=10,
+                        help="Batch size for Integrated Gradients computation. Higher values use more memory but are faster (default: 10)")
     parser.add_argument("--normalization-mode", type=str, default="percentile",
                         choices=["linear", "percentile"],
                         help="Normalization mode: 'linear' for min-max, 'percentile' for percentile clipping (default: percentile)")
@@ -436,6 +440,7 @@ def main():
     print(f"Policy path: {args.policy_path}")
     print(f"Using device: {device}")
     print(f"Integration steps: {args.n_integration_steps}")
+    print(f"IG batch size: {args.ig_batch_size}")
     print(f"Normalization mode: {args.normalization_mode}")
     if args.normalization_mode == 'percentile':
         print(f"Normalization percentile: {args.normalization_percentile}")
@@ -470,6 +475,7 @@ def main():
             train_dataset.meta,
             args.policy_overrides,
             n_integration_steps=args.n_integration_steps,
+            ig_batch_size=args.ig_batch_size,
             normalization_mode=args.normalization_mode,
             normalization_percentile=args.normalization_percentile
         )
