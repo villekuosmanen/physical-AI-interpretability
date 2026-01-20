@@ -10,8 +10,16 @@ class ACTPolicyWithGradients:
     Wrapper for ACTPolicy that provides gradient-based saliency visualizations using Integrated Gradients.
     """
     
-    def __init__(self, policy, preprocessor, image_shapes=None, n_integration_steps: int = 50,
-                 normalization_mode: str = 'percentile', normalization_percentile: float = 95.0):
+    def __init__(
+        self,
+        policy,
+        preprocessor,
+        image_shapes=None,
+        n_integration_steps: int = 50,
+        ig_batch_size: int = 10,
+        normalization_mode: str = 'percentile',
+        normalization_percentile: float = 95.0,
+    ):
         """
         Initialize the wrapper with an ACTPolicy.
         
@@ -20,6 +28,8 @@ class ACTPolicyWithGradients:
             preprocessor: Preprocessor for observations
             image_shapes: Optional list of image shapes [(H1, W1), (H2, W2), ...] if known in advance
             n_integration_steps: Number of steps for Integrated Gradients interpolation
+            ig_batch_size: Batch size for integrated gradients computation. Higher values use more
+                          memory but are faster due to parallelization. (default: 10)
             normalization_mode: 'linear' for min-max, 'percentile' for percentile clipping (default)
             normalization_percentile: Percentile to clip at when using percentile mode (default: 95.0)
         """
@@ -27,6 +37,7 @@ class ACTPolicyWithGradients:
         self.preprocessor = preprocessor
         self.config = policy.config
         self.n_integration_steps = n_integration_steps
+        self.ig_batch_size = ig_batch_size
         self.normalization_mode = normalization_mode
         self.normalization_percentile = normalization_percentile
         
@@ -103,6 +114,8 @@ class ACTPolicyWithGradients:
         images = []
         for key in self.config.image_features:
             if key in observation:
+                if len(observation[key].shape) == 3:
+                    observation[key] = observation[key].unsqueeze(0)
                 images.append(observation[key])
         return images
     
@@ -113,6 +126,9 @@ class ACTPolicyWithGradients:
                                      action_dim_idx: Optional[int] = None) -> Tuple[List[np.ndarray], float]:
         """
         Compute Integrated Gradients for both visual and proprioceptive inputs.
+        
+        Uses batched computation to leverage GPU parallelism for faster inference.
+        Multiple interpolation steps are processed together in batches.
         
         Args:
             observation: Dictionary of observations
@@ -135,53 +151,81 @@ class ACTPolicyWithGradients:
         proprio = observation['observation.state.pos']
         proprio_baseline = torch.zeros_like(proprio)
         
+        # Get device from first image
+        device = images[0].device if images else proprio.device
+        
         # Storage for accumulated gradients
         image_integrated_grads = [torch.zeros_like(img) for img in images]
         proprio_integrated_grad = torch.zeros_like(proprio)
         
         # Interpolation coefficients
-        alphas = torch.linspace(0, 1, self.n_integration_steps)
+        alphas = torch.linspace(0, 1, self.n_integration_steps, device=device)
         
-        # Compute gradients along the interpolation path
-        for alpha in tqdm(alphas, desc="Computing Integrated Gradients", leave=False):
-            # Create interpolated inputs
-            interpolated_images = []
+        # Process alphas in batches for efficiency
+        num_batches = (self.n_integration_steps + self.ig_batch_size - 1) // self.ig_batch_size
+        
+        for batch_idx in tqdm(range(num_batches), desc="Computing Integrated Gradients", leave=False):
+            batch_start = batch_idx * self.ig_batch_size
+            batch_end = min(batch_start + self.ig_batch_size, self.n_integration_steps)
+            batch_alphas = alphas[batch_start:batch_end]
+            current_batch_size = len(batch_alphas)
+            
+            # Create batched interpolated images
+            # Each image goes from (1, C, H, W) to (batch_size, C, H, W)
+            batched_interpolated_images = []
             for img, baseline in zip(images, image_baselines):
-                interpolated = baseline + alpha * (img - baseline)
-                interpolated.requires_grad = True
-                interpolated_images.append(interpolated)
+                # Expand to batch size
+                img_expanded = img.expand(current_batch_size, -1, -1, -1)
+                baseline_expanded = baseline.expand(current_batch_size, -1, -1, -1)
+                
+                # Reshape alphas for broadcasting: (batch_size,) -> (batch_size, 1, 1, 1)
+                alphas_reshaped = batch_alphas.view(-1, 1, 1, 1)
+                
+                # Interpolate: baseline + alpha * (input - baseline)
+                interpolated = baseline_expanded + alphas_reshaped * (img_expanded - baseline_expanded)
+                interpolated = interpolated.clone().requires_grad_(True)
+                batched_interpolated_images.append(interpolated)
             
-            interpolated_proprio = proprio_baseline + alpha * (proprio - proprio_baseline)
-            interpolated_proprio.requires_grad = True
+            # Create batched interpolated proprioception
+            # proprio is (1, D), expand to (batch_size, D)
+            proprio_expanded = proprio.expand(current_batch_size, -1)
+            proprio_baseline_expanded = proprio_baseline.expand(current_batch_size, -1)
             
-            # Create observation with interpolated inputs
-            obs_interpolated = {}
+            # Reshape alphas for broadcasting: (batch_size,) -> (batch_size, 1)
+            alphas_proprio = batch_alphas.view(-1, 1)
+            
+            batched_interpolated_proprio = proprio_baseline_expanded + alphas_proprio * (proprio_expanded - proprio_baseline_expanded)
+            batched_interpolated_proprio = batched_interpolated_proprio.clone().requires_grad_(True)
+            
+            # Create batched observation
+            obs_batched = {}
             for i, key in enumerate(self.config.image_features):
-                obs_interpolated[key] = interpolated_images[i]
-            obs_interpolated['observation.state.pos'] = interpolated_proprio
-            obs_interpolated['observation.state'] = interpolated_proprio
+                obs_batched[key] = batched_interpolated_images[i]
+            obs_batched['observation.state.pos'] = batched_interpolated_proprio
+            obs_batched['observation.state'] = batched_interpolated_proprio
             
-            # Preprocess
-            obs_interpolated = self.preprocessor(obs_interpolated)
+            # Preprocess (should handle batched inputs)
+            obs_batched = self.preprocessor(obs_batched)
             
             # Forward pass through policy
-            # Note: For RewACTPolicy, we need to handle the model structure
             if hasattr(self.policy, 'model'):
                 # Construct batch format expected by model
-                batch = dict(obs_interpolated)
+                batch = dict(obs_batched)
                 if self.config.image_features:
                     batch['observation.images'] = [batch[key] for key in self.config.image_features]
                 
-                # Forward through model
+                # Forward through model - now processes multiple samples at once
                 actions, reward_output, _ = self.policy.model(batch)
             else:
                 raise AttributeError("Policy doesn't have expected model structure")
             
             # Compute scalar loss based on aggregation method
+            # Sum over all batch elements and relevant dimensions
             if aggregation == 'sum':
                 loss = actions.sum()
             elif aggregation == 'norm':
-                loss = actions.norm()
+                # Sum of norms across batch
+                loss = actions.reshape(current_batch_size, -1).norm(dim=1).sum()
             elif aggregation == 'timestep':
                 if timestep_idx is None:
                     raise ValueError("timestep_idx required for 'timestep' aggregation")
@@ -196,13 +240,15 @@ class ACTPolicyWithGradients:
             # Backward pass
             loss.backward()
             
-            # Accumulate gradients
-            for i, img in enumerate(interpolated_images):
+            # Accumulate gradients (sum across batch dimension)
+            for i, img in enumerate(batched_interpolated_images):
                 if img.grad is not None:
-                    image_integrated_grads[i] += img.grad.detach()
+                    # Sum gradients across the batch dimension to accumulate
+                    image_integrated_grads[i] += img.grad.detach().sum(dim=0, keepdim=True)
             
-            if interpolated_proprio.grad is not None:
-                proprio_integrated_grad += interpolated_proprio.grad.detach()
+            if batched_interpolated_proprio.grad is not None:
+                # Sum gradients across batch dimension
+                proprio_integrated_grad += batched_interpolated_proprio.grad.detach().sum(dim=0, keepdim=True)
             
             # Zero gradients for next iteration
             self.policy.zero_grad()
