@@ -7,7 +7,7 @@ A package for interpretability analysis of physical AI models, including:
 - Token sampling and activation collection utilities
 """
 
-__version__ = "0.1.0"
+__version__ = "0.1.3"
 
 # Main exports - Public API
 from .sae import (

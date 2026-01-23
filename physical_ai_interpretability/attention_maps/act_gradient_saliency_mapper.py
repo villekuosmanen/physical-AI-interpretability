@@ -98,7 +98,6 @@ class ACTPolicyWithGradients:
         
         # Get the actual action prediction
         observation_copy = observation.copy()
-        observation_copy['observation.state'] = observation_copy['observation.state.pos']
         observation_copy = self.preprocessor(observation_copy)
         
         with torch.inference_mode():
@@ -148,7 +147,7 @@ class ACTPolicyWithGradients:
         image_baselines = [torch.zeros_like(img) for img in images]
         
         # Extract proprioception and create baseline (zeros)
-        proprio = observation['observation.state.pos']
+        proprio = observation['observation.state']
         proprio_baseline = torch.zeros_like(proprio)
         
         # Get device from first image
@@ -201,7 +200,6 @@ class ACTPolicyWithGradients:
             obs_batched = {}
             for i, key in enumerate(self.config.image_features):
                 obs_batched[key] = batched_interpolated_images[i]
-            obs_batched['observation.state.pos'] = batched_interpolated_proprio
             obs_batched['observation.state'] = batched_interpolated_proprio
             
             # Preprocess (should handle batched inputs)

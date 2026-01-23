@@ -93,7 +93,6 @@ class ACTPolicyWithAttention:
         handle = self.target_layer.register_forward_hook(attention_hook)
         
         # Call the original policy's select_action
-        observation['observation.state'] = observation['observation.state.pos']
         observation = self.preprocessor(observation)
         with torch.inference_mode():
             action = self.policy.select_action(observation)

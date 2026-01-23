@@ -33,6 +33,7 @@ dependencies = [
     "pandas>=1.3.0",
     "scipy",
     "huggingface_hub",
+    "robocandywrapper>=0.2.4",
     
     # Computer vision
     "opencv-python>=4.5.0",
