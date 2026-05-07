@@ -143,9 +143,9 @@ class ACTPolicyWithAttention:
                 else:
                     img_tensor_batched = img_tensor
 
-                img_tensor_batched = img_tensor_batched.to(next(self.policy.model.vision_encoder.resnet_feature_extractor.parameters()).device)
+                img_tensor_batched = img_tensor_batched.to(next(self.policy.model.backbone.parameters()).device)
 
-                feature_map_dict = self.policy.model.vision_encoder.resnet_feature_extractor(img_tensor_batched) # Use batched tensor
+                feature_map_dict = self.policy.model.backbone(img_tensor_batched) # Use batched tensor
                 feature_map = feature_map_dict["feature_map"]
                 h, w = feature_map.shape[2], feature_map.shape[3]
                 spatial_shapes.append((h, w))

@@ -212,8 +212,8 @@ class ACTPolicyWithGradients:
                 if self.config.image_features:
                     batch['observation.images'] = [batch[key] for key in self.config.image_features]
                 
-                # Forward through model - now processes multiple samples at once
-                actions, reward_output, _ = self.policy.model(batch)
+                model_out = self.policy.model(batch)
+                actions = model_out[0]
             else:
                 raise AttributeError("Policy doesn't have expected model structure")
             
