@@ -1,2 +1,3 @@
 from .act_attention_mapper import ACTPolicyWithAttention
+from .act_encoder_rollout import ACTPolicyWithEncoderRollout, RolloutResult
 from .act_gradient_saliency_mapper import ACTPolicyWithGradients

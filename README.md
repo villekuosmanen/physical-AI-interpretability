@@ -40,6 +40,23 @@ See `examples/usage_with_act.py` for use of the attention mapper with the defaul
 
 I would like to add support for Pi0, SmolVLA, and other foundation models at some point! 
 
+### Encoder attention rollout
+
+Standard decoder cross-attention can be misleading: on a vision-driven task it may show the decoder reading 100% from the proprio token and 0% from vision. That happens because the encoder's self-attention has already mixed vision content *into* the proprio token before the decoder ever sees it.
+
+`ACTPolicyWithEncoderRollout` traces this hidden dependency by composing self-attention across all encoder layers with the residual stream ([Abnar & Zuidema, 2020](https://arxiv.org/abs/2005.00928)), then reading the row of the rolled-out matrix that corresponds to the proprio token. The vision portion of that row, reshaped to the backbone feature grid, is a spatial attribution map showing where the proprio token's effective input attention actually lives.
+
+```
+python examples/visualise_encoder_rollout.py \
+    --ckpt path/to/ckpt \
+    --frames-dir frames/ \
+    --states states.json \
+    --output ./output/rollout_results \
+    --label left_pass
+```
+
+Output: per-frame heatmap overlays, a GIF, and a JSON of per-frame `{latent_share, proprio_share, vision_share}`.
+
 ## Feature Extraction
 
 Method of applying [Dictionary Learning](https://transformer-circuits.pub/2023/monosemantic-features) as proposed by Anthropic (and implemented in the famous [Golden Gate Claude](https://www.anthropic.com/news/golden-gate-claude) language model) into robotics and physical AI.
